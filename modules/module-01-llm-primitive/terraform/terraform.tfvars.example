@@ -1,0 +1,6 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit real values.
+
+resource_group_name = "rg-ai-course-week01"
+location            = "eastus"
+openai_account_name = "oai-ai-course-<your-initials>"   # must be globally unique

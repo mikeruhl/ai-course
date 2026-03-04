@@ -1,0 +1,20 @@
+[project]
+name = "module-22-reliability"
+version = "0.1.0"
+description = "Reliability patterns lab — retry, circuit breaker, fallback, guardrails"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "rich>=13.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[project.scripts]
+reliability = "src.reliability_patterns:main"

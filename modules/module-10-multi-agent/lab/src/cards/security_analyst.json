@@ -1,0 +1,23 @@
+{
+  "name": "security_analyst",
+  "description": "Analyses source code for security vulnerabilities including OWASP Top 10, injection flaws, authentication weaknesses, insecure deserialization, hardcoded secrets, and supply-chain risks. Use when there are concerns about data safety, access control, or attack surface.",
+  "skills": [
+    "OWASP Top 10 analysis",
+    "SQL injection detection",
+    "authentication and authorisation review",
+    "secrets and credential scanning",
+    "input validation assessment",
+    "dependency vulnerability awareness",
+    "threat modelling"
+  ],
+  "input_schema": {
+    "query": "string — the specific security concern or threat scenario",
+    "code": "string — the source code to analyse"
+  },
+  "output_schema": {
+    "vulnerabilities": "list[string] — discovered security issues",
+    "risk_level": "string — critical | high | medium | low | none",
+    "immediate_action": "string — the single most urgent remediation step"
+  },
+  "cost_tier": "medium"
+}

@@ -1,0 +1,15 @@
+[project]
+name = "module-07-planning-patterns"
+version = "0.1.0"
+description = "Lab: Planning Patterns — Plan-and-Execute, Reflexion, LATS"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "rich>=13.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+]

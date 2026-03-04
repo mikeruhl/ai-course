@@ -1,0 +1,15 @@
+[project]
+name = "module-18-autogen"
+version = "0.1.0"
+description = "Lab: AutoGen — Conversational Multi-Agent AI"
+requires-python = ">=3.11"
+dependencies = [
+    "pyautogen>=0.2",
+    "python-dotenv>=1.0",
+    "rich>=13.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+]

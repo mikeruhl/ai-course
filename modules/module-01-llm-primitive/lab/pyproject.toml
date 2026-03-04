@@ -1,0 +1,16 @@
+[project]
+name = "module-01-llm-primitive"
+version = "0.1.0"
+description = "Lab: LLM as a Compute Primitive"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "tiktoken>=0.7",
+    "python-dotenv>=1.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+    "rich>=13.0",     # pretty terminal output for experiments
+]

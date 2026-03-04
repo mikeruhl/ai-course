@@ -1,0 +1,13 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# Never commit terraform.tfvars to version control — it may contain secrets.
+
+# Short prefix for resource names. Must be lowercase alphanumeric, 3-8 chars.
+# Example: "ailearn", "miker08", "devlab"
+prefix = "ailearn"
+
+# Azure region. eastus2 is recommended for AI workloads.
+location = "eastus2"
+
+# Your Azure subscription ID.
+# Find with: az account show --query id -o tsv
+subscription_id = "00000000-0000-0000-0000-000000000000"

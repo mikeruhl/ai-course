@@ -1,0 +1,37 @@
+[
+  {
+    "id": "sentiment-positive-01",
+    "input": "I absolutely love this product! Best purchase I've made all year.",
+    "expected": "positive",
+    "scorer": "contains",
+    "prompt_version": "v1"
+  },
+  {
+    "id": "sentiment-negative-01",
+    "input": "This is completely broken and the customer support was terrible.",
+    "expected": "negative",
+    "scorer": "contains",
+    "prompt_version": "v1"
+  },
+  {
+    "id": "sentiment-neutral-01",
+    "input": "The package arrived on time and the item matches the description.",
+    "expected": "neutral",
+    "scorer": "contains",
+    "prompt_version": "v1"
+  },
+  {
+    "id": "sentiment-empty-input",
+    "input": "",
+    "expected": "output should be valid JSON and not throw an error",
+    "scorer": "llm",
+    "prompt_version": "v1"
+  },
+  {
+    "id": "sentiment-mixed-01",
+    "input": "Great product quality but the shipping took 3 weeks and the packaging was damaged.",
+    "expected": "output should acknowledge both positive and negative aspects",
+    "scorer": "llm",
+    "prompt_version": "v1"
+  }
+]

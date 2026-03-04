@@ -1,0 +1,16 @@
+[project]
+name = "module-17-semantic-kernel"
+version = "0.1.0"
+description = "Lab: Semantic Kernel — Plugins, Planners, and Agents"
+requires-python = ">=3.11"
+dependencies = [
+    "semantic-kernel[azure]>=1.0",
+    "python-dotenv>=1.0",
+    "rich>=13.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]

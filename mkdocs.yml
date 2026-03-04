@@ -1,0 +1,84 @@
+site_name: AI Engineering Course
+site_description: A hands-on, Azure-native curriculum for software engineers learning to build production agentic systems.
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Curriculum: CURRICULUM.md
+  - Setup: setup/README.md
+  - Phase 1 — Foundations:
+    - Week 1 Overview: weeks/week-01.md
+    - "01: LLM as a Compute Primitive": modules/module-01-llm-primitive/README.md
+    - "02: Prompt Engineering": modules/module-02-prompt-engineering/README.md
+    - "03: Tool Use": modules/module-03-tool-use/README.md
+    - Week 2 Overview: weeks/week-02.md
+    - "04: Async & Streaming": modules/module-04-async-streaming/README.md
+    - "05: Structured Outputs": modules/module-05-structured-outputs/README.md
+  - Phase 2 — Agentic Patterns:
+    - Week 3 Overview: weeks/week-03.md
+    - "06: ReAct Agent": modules/module-06-react-agent/README.md
+    - "07: Planning Patterns": modules/module-07-planning-patterns/README.md
+    - "08: Memory Systems": modules/module-08-memory-systems/README.md
+    - "09: RAG": modules/module-09-rag/README.md
+  - Phase 3 — Multi-Agent Systems:
+    - "10: Multi-Agent Architectures": modules/module-10-multi-agent/README.md
+    - "11: A2A Protocol": modules/module-11-a2a-protocol/README.md
+    - "12: MCP Protocol": modules/module-12-mcp-protocol/README.md
+    - "13: A2A Authentication": modules/module-13-a2a-auth/README.md
+  - Phase 4 — MCP Deep Dive:
+    - "14: Building MCP Servers": modules/module-14-mcp-servers/README.md
+    - "15: MCP Hosting": modules/module-15-mcp-hosting/README.md
+    - "16: MCP Security": modules/module-16-mcp-security/README.md
+  - Phase 5 — Orchestration Frameworks:
+    - "17: Semantic Kernel": modules/module-17-semantic-kernel/README.md
+    - "18: AutoGen": modules/module-18-autogen/README.md
+    - "19: LangGraph": modules/module-19-langgraph/README.md
+    - "20: Azure AI Foundry": modules/module-20-ai-foundry/README.md
+  - Phase 6 — Production & Operations:
+    - "21: Observability": modules/module-21-observability/README.md
+    - "22: Reliability Patterns": modules/module-22-reliability/README.md
+    - "23: Durable Execution": modules/module-23-durable-execution/README.md
+    - "24: Cost & Performance": modules/module-24-cost-performance/README.md
+  - Phase 7 — Security:
+    - "25: Security & Trust": modules/module-25-security/README.md
+
+plugins:
+  - search

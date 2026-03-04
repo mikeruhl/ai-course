@@ -1,0 +1,7 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit real values.
+
+resource_group_name          = "rg-ai-course-module21"
+location                     = "eastus"
+log_analytics_workspace_name = "law-ai-course-m21-yourname"
+app_insights_name            = "appi-ai-course-m21-yourname"

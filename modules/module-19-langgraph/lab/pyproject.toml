@@ -1,0 +1,22 @@
+[project]
+name = "module-19-langgraph"
+version = "0.1.0"
+description = "LangGraph lab — state graphs, conditional routing, checkpointing, HITL"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2",
+    "langchain-openai>=0.2",
+    "python-dotenv>=1.0",
+    "rich>=13.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[project.scripts]
+langgraph-agent = "src.langgraph_agent:main"
+hitl-agent = "src.hitl_agent:main"

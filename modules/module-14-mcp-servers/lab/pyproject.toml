@@ -1,0 +1,23 @@
+[project]
+name = "module-14-mcp-servers"
+version = "0.1.0"
+description = "Lab: Building MCP Servers"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "tiktoken>=0.7",
+    "azure-search-documents>=11.4",
+    "azure-identity>=1.15",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "rich>=13.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

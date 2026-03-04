@@ -1,0 +1,20 @@
+[project]
+name = "module-21-observability"
+version = "0.1.0"
+description = "Lab: Observability for Agents — OTel tracing, App Insights, and eval pipelines"
+requires-python = ">=3.11"
+dependencies = [
+    "opentelemetry-api>=1.24",
+    "opentelemetry-sdk>=1.24",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.24",
+    "azure-monitor-opentelemetry>=1.4",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "rich>=13.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]

@@ -1,0 +1,28 @@
+# Environment variables — never commit
+.env
+*.env
+
+# Terraform state and secrets
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# uv
+.python-version
+
+# MkDocs build output
+site/
+docs/
+
+# OS
+.DS_Store
+Thumbs.db

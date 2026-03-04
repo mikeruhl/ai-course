@@ -1,0 +1,22 @@
+{
+  "name": "code_reviewer",
+  "description": "Reviews source code for quality, readability, maintainability, naming conventions, and adherence to language best practices. Use when a developer wants general feedback on code style or structure.",
+  "skills": [
+    "code quality analysis",
+    "readability assessment",
+    "naming convention review",
+    "refactoring suggestions",
+    "design pattern identification",
+    "test coverage advice"
+  ],
+  "input_schema": {
+    "query": "string — what aspect of code quality the developer is concerned about",
+    "code": "string — the source code to review"
+  },
+  "output_schema": {
+    "findings": "list[string] — individual observations",
+    "overall_grade": "string — A | B | C | D | F",
+    "top_recommendation": "string — single most important improvement"
+  },
+  "cost_tier": "low"
+}

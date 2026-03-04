@@ -1,0 +1,5 @@
+prefix                = "mcplab"
+location              = "eastus2"
+subscription_id       = "<your-subscription-id>"
+azure_openai_key      = "<your-key>"
+azure_openai_endpoint = "https://<your-account>.openai.azure.com"

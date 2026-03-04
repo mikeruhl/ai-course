@@ -1,0 +1,105 @@
+// Module 21 — Task 3: Kusto Queries for Agent Observability
+//
+// Run these queries in:
+//   Azure Portal > Application Insights > Logs
+//
+// App Insights stores OTel spans in the `dependencies` table.
+// Span attributes appear in `customDimensions` as key-value pairs.
+// Duration is in milliseconds.
+//
+// ============================================================
+// QUERY 1: p95 latency by operation name (last 24 hours)
+// ============================================================
+// TODO: Write a query that:
+//   - Queries the `dependencies` table
+//   - Filters to the last 24 hours: where timestamp > ago(24h)
+//   - Groups by `name` (the span name: "agent_run", "llm_call", "tool_*")
+//   - Computes p95 duration: percentile(duration, 95)
+//   - Also computes p50, count, and avg for context
+//   - Orders by p95 descending
+//
+// Starter:
+dependencies
+| where timestamp > ago(24h)
+// TODO: summarize p50 = percentile(duration, 50),
+//              p95 = percentile(duration, 95),
+//              calls = count(),
+//              avg_ms = avg(duration)
+//       by name
+// TODO: order by p95 desc
+
+
+// ============================================================
+// QUERY 2: Total tokens per day (input + output, last 7 days)
+// ============================================================
+// TODO: Write a query that:
+//   - Queries the `dependencies` table
+//   - Filters to spans named "llm_call" (or however you named them)
+//   - Extracts input and output token counts from customDimensions:
+//       toint(customDimensions["gen_ai.usage.input_tokens"])
+//       toint(customDimensions["gen_ai.usage.output_tokens"])
+//   - Groups by day: bin(timestamp, 1d)
+//   - Sums input tokens, output tokens, and total tokens
+//   - Renders as a columnchart
+//
+// Starter:
+dependencies
+| where timestamp > ago(7d)
+| where name == "llm_call"
+// TODO: extend input_tokens = toint(customDimensions["gen_ai.usage.input_tokens"]),
+//              output_tokens = toint(customDimensions["gen_ai.usage.output_tokens"])
+// TODO: summarize total_input = sum(input_tokens),
+//              total_output = sum(output_tokens)
+//       by bin(timestamp, 1d)
+// TODO: extend total_tokens = total_input + total_output
+// TODO: render columnchart
+
+
+// ============================================================
+// QUERY 3: Tool call error rate per tool, per 5-minute window
+// ============================================================
+// TODO: Write a query that:
+//   - Queries the `dependencies` table
+//   - Filters to spans where name startswith "tool_"
+//   - Extracts tool name from customDimensions["tool.name"]
+//   - Extracts success from customDimensions["tool.success"]
+//   - Groups by bin(timestamp, 5m) and tool_name
+//   - Computes error_rate = errors / total (as a float 0.0-1.0)
+//   - Renders as a timechart
+//
+// Starter:
+dependencies
+| where timestamp > ago(24h)
+| where name startswith "tool_"
+// TODO: extend tool_name = tostring(customDimensions["tool.name"]),
+//              tool_success = tobool(customDimensions["tool.success"])
+// TODO: summarize total = count(),
+//              errors = countif(tool_success == false)
+//       by bin(timestamp, 5m), tool_name
+// TODO: extend error_rate = todouble(errors) / todouble(total)
+// TODO: render timechart
+
+
+// ============================================================
+// BONUS QUERY: Cost by feature name (if you set agent.feature_name)
+// ============================================================
+// This query shows which features are driving LLM costs.
+// Requires that your spans have the custom attribute: agent.feature_name
+//
+dependencies
+| where timestamp > ago(7d)
+| where name == "llm_call"
+| extend
+    feature = tostring(customDimensions["agent.feature_name"]),
+    input_tokens = toint(customDimensions["gen_ai.usage.input_tokens"]),
+    output_tokens = toint(customDimensions["gen_ai.usage.output_tokens"]),
+    model = tostring(customDimensions["gen_ai.request.model"])
+| summarize
+    total_input = sum(input_tokens),
+    total_output = sum(output_tokens),
+    call_count = count()
+  by feature, model
+| extend
+    // Approximate cost — update prices for your model/region
+    cost_usd = (total_input * 0.0000025) + (total_output * 0.00001)
+| order by cost_usd desc

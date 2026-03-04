@@ -1,0 +1,23 @@
+{
+  "name": "performance_advisor",
+  "description": "Identifies performance bottlenecks, algorithmic inefficiencies, unnecessary memory allocations, I/O blocking patterns, and scalability limitations in source code. Use when a developer is experiencing slowness, high resource usage, or wants to scale their code to handle more load.",
+  "skills": [
+    "algorithmic complexity analysis",
+    "memory profiling guidance",
+    "I/O and concurrency patterns",
+    "caching opportunities",
+    "database query optimisation",
+    "scalability assessment",
+    "benchmarking advice"
+  ],
+  "input_schema": {
+    "query": "string — the performance problem or scalability goal",
+    "code": "string — the source code to analyse"
+  },
+  "output_schema": {
+    "bottlenecks": "list[string] — identified performance problems",
+    "estimated_improvement": "string — rough improvement potential (e.g. '10x faster' or '50% less memory')",
+    "priority_fix": "string — the single highest-impact optimisation to implement first"
+  },
+  "cost_tier": "low"
+}
