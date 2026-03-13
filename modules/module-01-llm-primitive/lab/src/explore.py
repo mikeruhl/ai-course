@@ -4,7 +4,10 @@ Module 1 Lab — LLM as a Compute Primitive
 Starter file for Tasks 2–6. Each task has a clearly marked section.
 
 Run with:
-    uv run python src/explore.py
+    uv run python src/explore.py <task_number>
+
+Example:
+    uv run python src/explore.py 2
 
 Complete each task in order. The earlier tasks build context for later ones.
 """
@@ -12,6 +15,7 @@ Complete each task in order. The earlier tasks build context for later ones.
 import json
 import os
 import statistics
+import sys
 import time
 
 import httpx
@@ -48,7 +52,7 @@ def chat(messages: list[dict], temperature: float = 0, max_tokens: int = 200) ->
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
-    response = httpx.post(BASE_URL, headers=HEADERS, json=payload, timeout=30)
+    response = httpx.post(BASE_URL, headers=HEADERS, json=payload, timeout=120)
     response.raise_for_status()
     return response.json()
 
@@ -205,10 +209,13 @@ def task6_lost_in_middle():
             {"role": "user", "content": f"{context}\n\nWhat is the secret code word?"}
         ]
 
-        resp = chat(messages, temperature=0, max_tokens=50)
-        answer = resp["choices"][0]["message"]["content"].strip()
-        found = "ZEPHYR-7" in answer
-        print(f"  Padding ~{token_count:,} tokens: recalled={found}  answer={answer!r}")
+        try:
+            resp = chat(messages, temperature=0, max_tokens=50)
+            answer = resp["choices"][0]["message"]["content"].strip()
+            found = "ZEPHYR-7" in answer
+            print(f"  Padding ~{token_count:,} tokens: recalled={found}  answer={answer!r}")
+        except httpx.HTTPStatusError as e:
+            print(f"  Padding ~{token_count:,} tokens: FAILED ({e.response.status_code} — likely exceeds context window)")
 
     print("\nTesting recall at different context depths:")
     for multiplier in [1, 5, 20, 60]:
@@ -221,10 +228,24 @@ def task6_lost_in_middle():
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+TASKS = {
+    "2": task2_raw_response,
+    "3": task3_token_counting,
+    "4": task4_temperature_experiment,
+    "5": task5_latency_profiling,
+    "6": task6_lost_in_middle,
+}
+
 if __name__ == "__main__":
-    # Comment out tasks you've already completed
-    task2_raw_response()
-    task3_token_counting()
-    task4_temperature_experiment()
-    task5_latency_profiling()
-    task6_lost_in_middle()
+    if len(sys.argv) < 2:
+        print("Usage: uv run python src/explore.py <task_number>")
+        print(f"Available tasks: {', '.join(TASKS)}")
+        sys.exit(1)
+
+    task_num = sys.argv[1]
+    if task_num not in TASKS:
+        print(f"Unknown task: {task_num}")
+        print(f"Available tasks: {', '.join(TASKS)}")
+        sys.exit(1)
+
+    TASKS[task_num]()
