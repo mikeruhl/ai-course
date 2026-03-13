@@ -13,104 +13,104 @@ other agents. Your job becomes architecture, orchestration, and guardrails.
 
 ---
 
-## Phase 1 — Foundations (Weeks 1–2)
+## Chapter 1 — Foundations
 *Goal: Understand how LLMs actually work as a runtime, not just an API.*
 
-### Week 1: LLM Primitives + Tool Use
+### Section 1: LLM Primitives + Tool Use
 - [x] Module 01: LLM as a Compute Primitive
 - [x] Module 02: Prompt Engineering at Staff Level
 - [x] Module 03: Function Calling / Tool Use (raw agent loop)
 
-### Week 2: Async Agents + Structured Outputs at Depth
+### Section 2: Async Agents + Structured Outputs
 - [ ] Module 04: Async Agent Loops + Streaming
 - [ ] Module 05: Structured Outputs at Depth
 
 ---
 
-## Phase 2 — Agentic Patterns (Weeks 3–5)
+## Chapter 2 — Agentic Patterns
 *Goal: Know every standard agentic architecture by name and when to use each.*
 
-### Week 3: Core Agent Architectures
+### Section 1: Core Agent Architectures
 - [ ] Module 06: ReAct Agent (from scratch)
 - [ ] Module 07: Planning Patterns (Plan-and-Execute, Reflexion, LATS)
 
-### Week 4: Memory Systems
+### Section 2: Memory Systems
 - [ ] Module 08: Memory Systems (in-context, episodic, semantic, procedural)
   - *New Azure: Azure AI Search (vector store)*
 
-### Week 5: RAG
+### Section 3: RAG
 - [ ] Module 09: Retrieval-Augmented Generation
-  - *Reuses Azure AI Search from Week 4*
+  - *Reuses Azure AI Search from Section 2*
 
 ---
 
-## Phase 3 — Multi-Agent Systems (Weeks 6–8)
+## Chapter 3 — Multi-Agent Systems
 *Goal: Design systems where agents coordinate, delegate, and check each other.*
 
-### Week 6: Multi-Agent Architectures
+### Section 1: Multi-Agent Architectures
 - [ ] Module 10: Multi-Agent Architectures
 
-### Week 7: Agent Communication Protocols
+### Section 2: Agent Communication Protocols
 - [ ] Module 11: A2A Protocol (Google open standard)
 - [ ] Module 12: MCP Protocol (Anthropic)
 
-### Week 8: A2A Authentication
+### Section 3: A2A Authentication
 - [ ] Module 13: A2A Authentication (Managed Identity, OAuth 2.0, mTLS)
   - *New Azure: Container Apps, Managed Identity, App Registrations*
 
 ---
 
-## Phase 4 — MCP Deep Dive (Weeks 9–10)
+## Chapter 4 — MCP Deep Dive
 *Goal: Build MCP servers that AI agents can consume.*
 
-### Week 9: Building MCP Servers
+### Section 1: Building MCP Servers
 - [ ] Module 14: Building MCP Servers (Python SDK)
 
-### Week 10: MCP Hosting & Security
+### Section 2: MCP Hosting & Security
 - [ ] Module 15: MCP Hosting (Container Apps, HTTP+SSE transport)
   - *New Azure: Container Registry, Container Apps Environment*
 - [ ] Module 16: MCP Security (OAuth, sandboxing, injection hardening)
 
 ---
 
-## Phase 5 — Orchestration Frameworks (Weeks 11–12)
+## Chapter 5 — Orchestration Frameworks
 *Goal: Pick the right framework; understand abstractions vs raw code.*
 
-### Week 11: Microsoft Stack
+### Section 1: Microsoft Stack
 - [ ] Module 17: Semantic Kernel
 - [ ] Module 18: AutoGen
 
-### Week 12: LangGraph + Azure AI Foundry
+### Section 2: LangGraph + Azure AI Foundry
 - [ ] Module 19: LangGraph
 - [ ] Module 20: Azure AI Foundry Agent Service
 
 ---
 
-## Phase 6 — Production & Operations (Weeks 13–15)
+## Chapter 6 — Production & Operations
 *Goal: Run agents reliably in production.*
 
-### Week 13: Observability
+### Section 1: Observability
 - [ ] Module 21: Observability for Agents
   - *New Azure: Azure Monitor, Application Insights*
 
-### Week 14: Reliability
+### Section 2: Reliability
 - [ ] Module 22: Reliability Patterns
 
-### Week 15: Durable Execution + Cost
+### Section 3: Durable Execution + Cost
 - [ ] Module 23: Durable Execution (Azure Durable Functions, Temporal)
   - *New Azure: Azure Functions, Storage Account*
 - [ ] Module 24: Cost & Performance
 
 ---
 
-## Phase 7 — Security & Trust (Ongoing)
+## Chapter 7 — Security & Trust
 *Your biggest differentiator as a staff engineer.*
 
 - [ ] Module 25: Security (prompt injection, STRIDE, PyRIT red-teaming)
 
 ---
 
-## Azure Services by Phase
+## Azure Services by Chapter
 
 | Service | First introduced |
 |---|---|
@@ -128,33 +128,33 @@ other agents. Your job becomes architecture, orchestration, and guardrails.
 
 ## Complete Modules Index
 
-| Module | Name | Week | Phase | Terraform |
-|---|---|---|---|---|
-| 01 | LLM as a Compute Primitive | 1 | 1 | ✓ (Azure OpenAI) |
-| 02 | Prompt Engineering at Staff Level | 1 | 1 | — |
-| 03 | Function Calling / Tool Use | 1 | 1 | — |
-| 04 | Async Agent Loops + Streaming | 2 | 1 | — |
-| 05 | Structured Outputs at Depth | 2 | 1 | — |
-| 06 | ReAct Agent | 3 | 2 | — |
-| 07 | Planning Patterns | 3 | 2 | — |
-| 08 | Memory Systems | 4 | 2 | ✓ (AI Search) |
-| 09 | RAG | 5 | 2 | — |
-| 10 | Multi-Agent Architectures | 6 | 3 | — |
-| 11 | A2A Protocol | 7 | 3 | — |
-| 12 | MCP Protocol | 7 | 3 | — |
-| 13 | A2A Authentication | 8 | 3 | ✓ (Container Apps, Managed Identity) |
-| 14 | Building MCP Servers | 9 | 4 | — |
-| 15 | MCP Hosting | 10 | 4 | ✓ (Container Registry, Container Apps Env) |
-| 16 | MCP Security | 10 | 4 | — |
-| 17 | Semantic Kernel | 11 | 5 | — |
-| 18 | AutoGen | 11 | 5 | — |
-| 19 | LangGraph | 12 | 5 | — |
-| 20 | Azure AI Foundry Agent Service | 12 | 5 | — |
-| 21 | Observability for Agents | 13 | 6 | ✓ (Azure Monitor, App Insights) |
-| 22 | Reliability Patterns | 14 | 6 | — |
-| 23 | Durable Execution | 15 | 6 | ✓ (Azure Functions, Storage) |
-| 24 | Cost & Performance | 15 | 6 | — |
-| 25 | Security & Trust | ongoing | 7 | — |
+| Module | Name | Chapter | Terraform |
+|---|---|---|---|
+| 01 | LLM as a Compute Primitive | 1 | ✓ (Azure OpenAI) |
+| 02 | Prompt Engineering at Staff Level | 1 | — |
+| 03 | Function Calling / Tool Use | 1 | — |
+| 04 | Async Agent Loops + Streaming | 1 | — |
+| 05 | Structured Outputs at Depth | 1 | — |
+| 06 | ReAct Agent | 2 | — |
+| 07 | Planning Patterns | 2 | — |
+| 08 | Memory Systems | 2 | ✓ (AI Search) |
+| 09 | RAG | 2 | — |
+| 10 | Multi-Agent Architectures | 3 | — |
+| 11 | A2A Protocol | 3 | — |
+| 12 | MCP Protocol | 3 | — |
+| 13 | A2A Authentication | 3 | ✓ (Container Apps, Managed Identity) |
+| 14 | Building MCP Servers | 4 | — |
+| 15 | MCP Hosting | 4 | ✓ (Container Registry, Container Apps Env) |
+| 16 | MCP Security | 4 | — |
+| 17 | Semantic Kernel | 5 | — |
+| 18 | AutoGen | 5 | — |
+| 19 | LangGraph | 5 | — |
+| 20 | Azure AI Foundry Agent Service | 5 | — |
+| 21 | Observability for Agents | 6 | ✓ (Azure Monitor, App Insights) |
+| 22 | Reliability Patterns | 6 | — |
+| 23 | Durable Execution | 6 | ✓ (Azure Functions, Storage) |
+| 24 | Cost & Performance | 6 | — |
+| 25 | Security & Trust | 7 | — |
 
 ---
 

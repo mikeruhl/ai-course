@@ -1,6 +1,6 @@
 # Module 4: Async Agent Loops + Streaming
 
-**Week 2 · Phase 1 — Foundations**
+**Chapter 1 — Foundations**
 
 ---
 

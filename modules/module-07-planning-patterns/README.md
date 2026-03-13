@@ -1,6 +1,6 @@
 # Module 07: Planning Patterns
 
-**Phase 2 — Agentic Patterns | Week 3**
+**Chapter 2 — Agentic Patterns**
 
 ## Prerequisites
 

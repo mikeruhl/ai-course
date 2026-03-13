@@ -43,19 +43,16 @@ Before starting Module 1, complete the [course setup](./setup/README.md).
 
 ## Curriculum
 
-See [CURRICULUM.md](./CURRICULUM.md) for the full 15-week outline.
+See [CURRICULUM.md](./CURRICULUM.md) for the full outline.
 
 ## Folder Structure
 
 ```
 ai-course/
 ├── README.md                   ← This file
-├── CURRICULUM.md               ← Full 15-week outline
+├── CURRICULUM.md               ← Full course outline
 ├── setup/
 │   └── README.md               ← One-time environment setup
-├── weeks/
-│   ├── week-01.md              ← Week-level summaries (concept reference)
-│   └── ...
 └── modules/
     ├── module-01-llm-primitive/
     │   ├── README.md           ← Concepts + lab instructions
@@ -81,8 +78,8 @@ Each module is self-contained:
 5. Work through the lab tasks in the README
 6. Check your understanding with the conceptual checkpoints
 
-Modules within the same week share Azure resources. Only the first module
-in a week typically has Terraform — later modules reference those outputs.
+Modules within the same chapter share Azure resources. Only the first module
+in a chapter typically has Terraform — later modules reference those outputs.
 
 ## Cost Estimate
 

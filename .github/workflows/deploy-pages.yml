@@ -32,7 +32,6 @@ jobs:
           cp README.md docs/index.md
           cp CURRICULUM.md docs/
           cp -r setup docs/
-          cp -r weeks docs/
           mkdir -p docs/modules
           for mod in modules/module-*/; do
             mod_name=$(basename "$mod")

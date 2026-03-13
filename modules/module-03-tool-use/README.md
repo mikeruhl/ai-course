@@ -1,6 +1,6 @@
 # Module 3: Function Calling / Tool Use
 
-**Week 1 · Phase 1 — Foundations**
+**Chapter 1 — Foundations**
 
 ---
 
@@ -451,4 +451,4 @@ This is the core pattern behind code assistants, internal knowledge bots, and au
 
 ---
 
-**Next:** [Week 2 — Structured Outputs, Async Agents, Streaming](../../weeks/week-02.md)
+**Next:** [Module 04 — Async Agent Loops + Streaming](../module-04-async-streaming/README.md)

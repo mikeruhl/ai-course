@@ -1,6 +1,6 @@
 # Module 1: LLM as a Compute Primitive
 
-**Week 1 · Phase 1 — Foundations**
+**Chapter 1 — Foundations**
 
 ---
 
