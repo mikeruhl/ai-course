@@ -445,23 +445,49 @@ uv sync
 
 ### Task A: Chunking Strategies
 
-**Goal:** Implement and compare three chunking approaches on the same document.
+**Goal:** Implement and compare three chunking approaches on the same document to see how chunk boundaries affect retrieval unit quality.
 
-1. Implement `chunk_fixed_size(text, chunk_size=500, overlap=50)` — sliding
-   window chunking in characters. Each chunk starts at `i * (chunk_size - overlap)`.
+**What to do:**
+1. Open `lab/src/rag_pipeline.py` and locate the three chunking functions (lines ~206-260)
+2. Review the implementations: `chunk_fixed()`, `chunk_sentence()`, and `chunk_recursive()` — all three are already implemented
+3. Study how `chunk_recursive()` uses the separator hierarchy (`["\n\n", "\n", ". ", " "]`) and recurses when a piece exceeds `max_size`
+4. The `task_a()` runner (line ~263) applies all three strategies to the first sample document ("Azure OpenAI Models and Pricing")
+5. Run the task:
+   ```bash
+   cd modules/module-09-rag/lab
+   uv run rag --task A
+   ```
 
-2. Implement `chunk_by_sentence(text, max_chunk_chars=800)` — split on sentence
-   boundaries (`.`, `!`, `?` followed by whitespace), then greedily accumulate
-   sentences until `max_chunk_chars` is reached. Start a new chunk when the
-   next sentence would exceed the limit.
+**Expected result:**
+- The source document is ~900 chars, and each strategy produces a different number of chunks:
+  ```
+  Source document: Azure OpenAI Models and Pricing
+  Length: 916 chars
 
-3. Implement `chunk_recursive(text, max_chars=600)` — try `\n\n` first, then
-   `\n`, then `. `, then ` `. At each level, if a resulting piece still exceeds
-   `max_chars`, recurse into the next separator. Return a flat list of chunks.
+  ┌─ Fixed-Size Chunking (3 chunks) ─────────────────────────────────────┐
+  │  #  │ Length │ Preview                                               │
+  │  0  │    500 │ Azure OpenAI Service provides access to OpenAI's...   │
+  │  1  │    500 │ tokens and multimodal inputs (text and images). G...   │
+  │  2  │    366 │ at $0.13 per 1M tokens. Both support shortening...    │
+  └──────────────────────────────────────────────────────────────────────┘
 
-4. Implement `compare_chunking_strategies(text)` — run all three on the same
-   text and print a Rich table: strategy name, chunk count, average chunk size,
-   min chunk size, max chunk size.
+  ┌─ Sentence-Aware Chunking (2 chunks) ─────────────────────────────────┐
+  │  #  │ Length │ Preview                                               │
+  │  0  │    487 │ Azure OpenAI Service provides access to OpenAI's...   │
+  │  1  │    429 │ For embeddings, text-embedding-3-small produces...    │
+  └──────────────────────────────────────────────────────────────────────┘
+
+  ┌─ Recursive Chunking (3 chunks) ──────────────────────────────────────┐
+  │  #  │ Length │ Preview                                               │
+  │  0  │    342 │ Azure OpenAI Service provides access to OpenAI's...   │
+  │  1  │    289 │ GPT-4o-mini is a cost-optimized variant designed...   │
+  │  2  │    285 │ For embeddings, text-embedding-3-small produces...    │
+  └──────────────────────────────────────────────────────────────────────┘
+  ```
+- Fixed-size chunks cut mid-sentence; sentence-aware chunks respect sentence boundaries but produce fewer, larger chunks; recursive chunks respect paragraph boundaries first
+
+**Why this matters:**
+Chunk quality is the highest-leverage parameter in a RAG system. A chunk that splits a key sentence in half means neither half is retrievable for the right query. Recursive chunking is the general-purpose default because it preserves natural document structure (paragraphs > lines > sentences) without requiring NLP.
 
 **Run with:** `uv run rag --task A`
 
@@ -469,22 +495,35 @@ uv sync
 
 ### Task B: Ingestion Pipeline
 
-**Goal:** Chunk, embed, and upload documents to Azure AI Search.
+**Goal:** Chunk, embed, and upload documents to Azure AI Search to build a searchable knowledge base.
 
-1. Implement `embed_text(text, client)` — POST to the Azure OpenAI embeddings
-   endpoint, return the 1536-float vector.
+**What to do:**
+1. Open `lab/src/rag_pipeline.py` and locate `task_b()` (line ~294) and the helper functions `embed()` (line ~183), `_upsert_to_search()` (line ~329)
+2. Review how the pipeline works: `SAMPLE_DOCS` are chunked with `chunk_recursive(max_size=400)`, each chunk gets a `ChunkRecord` with `id`, `doc_id`, and `text`
+3. Embeddings are generated in batches of 16 via `embed()`, which calls the Azure OpenAI embeddings endpoint
+4. If `AZURE_SEARCH_ENDPOINT` is set, `_upsert_to_search()` creates the index and uploads documents; otherwise it runs in local-only mode (embeddings generated but not uploaded)
+5. Run the task:
+   ```bash
+   cd modules/module-09-rag/lab
+   uv run rag --task B
+   ```
 
-2. Implement `upsert_document_chunk(chunk_id, content, embedding, metadata, client)` —
-   upload a single chunk to Azure AI Search with the schema:
-   `{id, content, embedding, source, chunk_index}`.
+**Expected result:**
+- The four `SAMPLE_DOCS` are chunked into ~12-16 chunks total:
+  ```
+  Total chunks to embed: 14
+    Embedded batch 1: 14 chunks, dim=1536
+  ```
+- If Azure AI Search is configured:
+  ```
+    Index 'rag-documents' created/updated.
+    Uploaded 14 documents to index.
+  ```
+- If not configured, a message indicating local-only mode with embeddings still generated
+- Final confirmation: `Embedded 14 chunks successfully.`
 
-3. Implement `ingest_documents(docs_dir)` — for each `.txt` and `.md` file in
-   `docs_dir`, read the text, chunk with `chunk_recursive()`, embed each chunk,
-   upsert to the index. Display progress with a Rich progress bar. Log a
-   summary: N files, M chunks ingested.
-
-   For testing without real files, fall back to `SAMPLE_DOCS` when the
-   directory is empty or doesn't exist.
+**Why this matters:**
+The ingestion pipeline is the offline half of RAG. Batch embedding (16 texts per call) reduces API round-trips by 16x compared to single-text calls. The `mergeOrUpload` action in the upsert ensures re-running ingestion updates existing chunks rather than creating duplicates — essential for incremental index updates in production.
 
 **Run with:** `uv run rag --task B`
 
@@ -492,83 +531,123 @@ uv sync
 
 ### Task C: Retrieval — Three Modes
 
-**Goal:** Implement vector search, keyword search, and hybrid search with RRF.
+**Goal:** Implement and compare vector search, keyword search, and hybrid search to see how each handles different query types.
 
-1. Implement `retrieve_vector(query, top_k, client)` — embed the query, POST to
-   Azure AI Search with `vectorQueries`. Return `[{"id": str, "content": str,
-   "score": float}]` sorted by score descending.
+**What to do:**
+1. Open `lab/src/rag_pipeline.py` and locate `task_c()` (line ~378) and the `_search()` helper (line ~428)
+2. Review how `_search()` builds the request body differently per mode:
+   - `keyword`: sets `body["search"]` with `queryType: "simple"` (BM25 only)
+   - `vector`: embeds the query and sets `body["vectorQueries"]` (semantic only)
+   - `hybrid`: sets both fields, letting Azure AI Search apply RRF internally
+3. Without Azure AI Search configured, the task falls back to local vector search using `cosine_similarity()` over in-memory embeddings
+4. Three test queries are pre-configured: rate limits, hybrid search mechanics, and CRAG
+5. Run the task:
+   ```bash
+   cd modules/module-09-rag/lab
+   uv run rag --task C
+   ```
 
-2. Implement `retrieve_keyword(query, top_k, client)` — POST to Azure AI Search
-   with the `search` field (text search mode, no vector). Return the same shape.
+**Expected result:**
+- For each query, three tables showing top-3 results per retrieval mode:
+  ```
+  Query: What are the rate limits for GPT-4o-mini?
 
-3. Implement `reciprocal_rank_fusion(vector_results, keyword_results, k=60)` —
-   for each unique document across both lists, compute
-   `score = 1/(k + vector_rank) + 1/(k + keyword_rank)`. Use rank=∞ (score=0)
-   if the document doesn't appear in a list. Sort by combined score descending.
+  ┌─ KEYWORD results ────────────────────────────────────────────────────┐
+  │ Score  │ ID                       │ Text                            │
+  │ 8.2140 │ azure-openai-rate-lim-0  │ Azure OpenAI enforces rate...   │
+  │ 3.1205 │ azure-openai-models-1    │ GPT-4o-mini is a cost-opti...   │
+  └────────────────────────────────────────────────────────────────────────┘
 
-4. Implement `retrieve_hybrid(query, top_k, client)` — run both vector and
-   keyword retrieval, apply RRF, return the merged top-k results.
+  ┌─ VECTOR results ─────────────────────────────────────────────────────┐
+  │ Score  │ ID                       │ Text                            │
+  │ 0.8734 │ azure-openai-rate-lim-1  │ Default rate limits for st...   │
+  │ 0.8291 │ azure-openai-rate-lim-0  │ Azure OpenAI enforces rate...   │
+  └────────────────────────────────────────────────────────────────────────┘
+  ```
+- In local-only mode (no Azure AI Search), only vector search results are shown
+- The query "What is CRAG and how does it improve RAG?" demonstrates where vector search outperforms keyword search — "CRAG" as an acronym may not match BM25 well, but the embedding captures the semantic relationship to "Corrective RAG"
 
-5. Test all three on three different queries. Print a Rich table comparing the
-   top-3 results from each mode for the same query.
+**Why this matters:**
+No single retrieval mode dominates all query types. Keyword search excels at exact term matches (error codes, version numbers); vector search handles paraphrases and conceptual queries. Hybrid search with RRF consistently outperforms either alone, which is why it is the default for production RAG systems.
 
-**Run with:** `uv run rag --task C --mode vector|keyword|hybrid --query "your query"`
+**Run with:** `uv run rag --task C`
 
 ---
 
 ### Task D: Generation — the RAG Prompt
 
-**Goal:** Construct a well-formed RAG prompt and generate a grounded answer.
+**Goal:** Construct a well-formed RAG prompt with retrieved context and generate a grounded, cited answer.
 
-1. Implement `build_rag_prompt(question, retrieved_chunks)` — format the
-   retrieved chunks as numbered context blocks:
+**What to do:**
+1. Open `lab/src/rag_pipeline.py` and locate `task_d()` (line ~454)
+2. Review the RAG prompt construction (lines ~488-501): retrieved chunks are formatted as `[Source 1]`, `[Source 2]`, etc., and the system prompt instructs the model to answer ONLY from context and cite sources
+3. The pipeline is: retrieve top-3 chunks (hybrid or local vector) -> build context block -> call LLM -> display answer in a Rich panel
+4. Three test questions are pre-configured: cost comparison, HNSW configuration, and advanced RAG patterns
+5. Run the task:
+   ```bash
+   cd modules/module-09-rag/lab
+   uv run rag --task D
    ```
-   [1] <content of chunk 1>
-   [2] <content of chunk 2>
-   ```
-   The system prompt must instruct the model to:
-   - Answer ONLY from the provided context
-   - Cite sources using [1], [2] notation
-   - If the context doesn't contain the answer, say "I don't have enough
-     information in the provided context to answer this question."
 
-2. Implement `answer_with_rag(question, mode="hybrid")` — the full pipeline:
-   retrieve chunks using the specified mode, build the prompt, call the LLM,
-   return `{"answer": str, "sources": list[str], "chunks_used": int}`.
+**Expected result:**
+- For each question, a green-bordered panel with a grounded answer citing sources:
+  ```
+  Question: What is the cost difference between GPT-4o and GPT-4o-mini?
 
-3. Test with 3-5 questions about the ingested documents. Verify the model
-   cites sources and doesn't hallucinate facts not in the context. Deliberately
-   ask a question the context can't answer and verify the model admits it.
+  ┌─ Answer ─────────────────────────────────────────────────────────────┐
+  │ GPT-4o-mini costs approximately $0.15 per 1M input tokens and       │
+  │ $0.60 per 1M output tokens, making it 10-20x cheaper than GPT-4o   │
+  │ [Source 1]. For provisioned throughput, one PTU provides ~6 RPM     │
+  │ for GPT-4o versus ~25 RPM for GPT-4o-mini [Source 2].              │
+  └──────────────────────────────────────────────────────────────────────┘
+  Sources used: 3 chunks
+  ```
+- Answers should reference `[Source N]` citations that map back to retrieved chunks
+- If you add a question outside the knowledge base (e.g., "What is Kubernetes?"), the model should respond with "I don't have enough information in the provided context to answer this question."
 
-**Run with:** `uv run rag --task D --query "What is Azure OpenAI?"`
+**Why this matters:**
+The RAG prompt is where retrieval quality meets generation quality. The system instruction to cite sources and refuse unanswerable questions is the primary defense against hallucination. Without it, the model will confidently fabricate answers that look grounded but are not. The `[Source N]` citation pattern also makes answers auditable — you can trace every claim back to a retrieved chunk.
+
+**Run with:** `uv run rag --task D`
 
 ---
 
 ### Task E: Evaluation (RAGAS-Style)
 
-**Goal:** Implement faithfulness and answer relevance scoring.
+**Goal:** Implement RAGAS-style faithfulness and answer relevance scoring to measure RAG output quality.
 
-1. Implement `score_faithfulness(answer, context_chunks)`:
-   - Call the LLM to extract atomic claims from the answer (JSON array of strings)
-   - For each claim, call the LLM: "Is this claim supported by the context? yes/no"
-   - Faithfulness = count("yes") / total_claims
-   - Return a float 0.0-1.0
+**What to do:**
+1. Open `lab/src/rag_pipeline.py` and locate `task_e()` (line ~513)
+2. Review the three evaluation cases (lines ~517-533): each has a `question`, `expected` answer, and `context` drawn from `SAMPLE_DOCS`
+3. Faithfulness scoring (lines ~547-563): the LLM extracts claims from the answer and checks each against the context, outputting JSON with `{"claims": [{"claim": "...", "supported": true/false}]}`
+4. Answer relevancy (line ~566): computed as cosine similarity between the question embedding and the answer embedding
+5. Context precision (line ~570): computed as cosine similarity between the question embedding and the context embedding
+6. Run the task:
+   ```bash
+   cd modules/module-09-rag/lab
+   uv run rag --task E
+   ```
 
-2. Implement `score_answer_relevance(question, answer)`:
-   - Call the LLM to generate 3 questions that the given answer would answer
-   - Embed the original question and each generated question
-   - Compute cosine similarity between original and each generated question
-   - Return the mean cosine similarity (float 0.0-1.0)
-   - Use the `cosine_similarity()` helper already implemented
+**Expected result:**
+- Three evaluation cases with metrics tables:
+  ```
+  Q: What is the cost of GPT-4o-mini per million input tokens?
+  A: GPT-4o-mini costs approximately $0.15 per 1M input tokens.
 
-3. Implement `run_evaluation(qa_pairs)` — for each `{"question": str}` pair:
-   - Run `answer_with_rag(question)` to get the answer and retrieved context
-   - Score faithfulness and answer relevance
-   - Print a Rich table: question, answer preview, faithfulness, relevance
+  ┌─ Metrics ─────────────────────────────────────────────────────────────┐
+  │ Metric              │ Score  │ Detail                               │
+  ├─────────────────────┼────────┼──────────────────────────────────────┤
+  │ Faithfulness        │ 1.00   │ 2/2 claims supported                 │
+  │ Answer Relevancy    │ 0.9312 │ cosine(question, answer)             │
+  │ Context Precision   │ 0.8847 │ cosine(question, context)            │
+  └──────────────────────────────────────────────────────────────────────┘
+  ```
+- Well-grounded questions (cost, HNSW algorithm) should score faithfulness near 1.0
+- Answer relevancy scores above 0.85 indicate the answer addresses the question asked
+- If faithfulness parsing fails (malformed JSON from the LLM), the score shows "error"
 
-4. Test with 3 questions: one well-grounded, one that pushes at the edges of
-   your context, one that is clearly outside the knowledge base. Verify
-   faithfulness scores match your expectations.
+**Why this matters:**
+Faithfulness is the most critical RAG metric — a system scoring below 0.7 is hallucinating too often for production use. Answer relevancy catches a subtler failure: the model answers accurately from context but answers a different question than was asked. These two metrics can be computed automatically without ground-truth labels, making them viable for continuous production monitoring.
 
 **Run with:** `uv run rag --task E`
 

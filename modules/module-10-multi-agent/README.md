@@ -284,182 +284,224 @@ uv sync
 
 ### Lab 10A: Orchestrator-Subagent Routing
 
-**Goal:** Build an orchestrator that routes queries to one of three specialists.
+**Goal:** Build an orchestrator that routes queries to one of three specialists based on LLM-driven confidence scoring.
 
-The orchestrator receives a user query and decides (via LLM reasoning) which
-specialist to invoke:
-- `code_reviewer`: analyzes code quality, patterns, and best practices
-- `security_analyst`: identifies security vulnerabilities and risks
-- `performance_advisor`: spots performance bottlenecks and optimization opportunities
+**What to do:**
 
-**Tasks:**
+1. Open `lab/src/orchestrator_subagent.py`. Find the three specialist functions:
+   `code_reviewer_agent()`, `security_analyst_agent()`, and `performance_advisor_agent()`.
+   Each has a TODO comment at Task 1 — update the user message in each to include
+   the `query` parameter so the specialist focuses on the developer's actual concern.
 
-1. Implement the three specialist agents, each with:
-   - A distinct system prompt reflecting their expertise
-   - A function signature: `agent_name(query: str, code: str) -> dict`
-   - Structured JSON output (findings, severity, recommendation)
+2. Study the `orchestrator()` function. It already handles high-confidence routing
+   (confidence >= 0.7). Find the `NotImplementedError` at Task 3 and implement
+   the low-confidence path: call all three specialists and merge their results
+   into a list.
 
-2. Implement the orchestrator agent that:
-   - Receives the raw user query
-   - Uses LLM reasoning to decide which specialist to invoke
-   - Returns the routing decision as structured JSON: `{"agent": "...", "reason": "..."}`
-   - Invokes the chosen specialist and returns the result
+3. Run:
+   ```bash
+   cd modules/module-10-multi-agent/lab
+   uv run python src/orchestrator_subagent.py
+   ```
 
-3. Test with three different queries that should route to different specialists:
-   - "This function iterates over a list 10,000 times..."
-   - "This endpoint accepts user input and builds a SQL query..."
-   - "This class has 47 methods and 800 lines..."
+**Expected result:**
+- Three test cases run sequentially. For each you see a routing table and specialist findings:
+  ```
+  Test Case 1: Code quality concern
+  Routed to   code_reviewer
+  Confidence  95%
+  Reason      The query is about code readability and improvement
+  Latency     2.14s
+  ┌─ Specialist findings ─────────────────────────────────────┐
+  │ {                                                         │
+  │   "findings": ["Single-letter variable names", ...],      │
+  │   "overall_grade": "D",                                   │
+  │   "top_recommendation": "Use descriptive variable names"  │
+  │ }                                                         │
+  └───────────────────────────────────────────────────────────┘
+  ```
+- Test Case 2 routes to `security_analyst`, Test Case 3 routes to `performance_advisor`.
+- If any query produces confidence < 0.7 (after Task 3), all three specialists run and you see a merged result list.
 
-4. Add confidence scoring: the orchestrator returns a confidence score
-   (0.0-1.0) alongside its routing decision. If confidence < 0.7, invoke
-   all three specialists and return all results.
-
-**File:** `lab/src/orchestrator_subagent.py`
+**Why this matters:**
+LLM-based routing replaces brittle keyword matching with semantic understanding of intent. The confidence threshold pattern is how production systems decide between specialist routing and broad-spectrum analysis — the same pattern appears in customer service triage, incident response, and code review pipelines.
 
 ---
 
 ### Lab 10B: Handoff Chain
 
-**Goal:** Build a 3-stage pipeline where agents hand off to each other via shared context.
+**Goal:** Build a 3-stage pipeline (planner, researcher, writer) where agents hand off context through a shared dict.
 
-Pipeline: `planner → researcher → writer`
+**What to do:**
 
-Each stage reads the context, does its work, and adds to the context before
-passing it to the next stage.
+1. Open `lab/src/handoff_chain.py`. Study the `AgentContext` TypedDict and
+   `AgentMetadata` TypedDict at the top — these define the shared state contract.
 
-**Tasks:**
+2. Find `researcher_agent()` (the TODO at Task 2). Improve its system prompt to
+   instruct the model to cite concrete technical details, flag uncertainty, and
+   target senior engineers familiar with Python.
 
-1. Define the context schema:
-   ```python
-   context = {
-       "task": str,           # original user request (immutable)
-       "plan": str | None,    # set by planner
-       "research": str | None, # set by researcher
-       "draft": str | None,   # set by writer
-       "metadata": {
-           "agents_run": list[str],
-           "token_usage": dict,
-           "start_time": float
-       }
-   }
+3. Find `run_pipeline()` (the TODO at Task 3). Add a `rich.progress` display so
+   each stage shows progress in real time.
+
+4. Run:
+   ```bash
+   cd modules/module-10-multi-agent/lab
+   uv run python src/handoff_chain.py
    ```
 
-2. Implement each agent as a function. Each agent:
-   - Reads relevant context keys
-   - Builds its system prompt referencing the prior stage's output
-   - Calls the LLM
-   - Writes its output to the appropriate context key
-   - Appends its name to `metadata.agents_run`
+**Expected result:**
+- Console logs show each stage running sequentially with token counts:
+  ```
+  [14:22:01] Running stage: planner
+  [14:22:04] Stage complete: planner (tokens so far: 847)
+  [14:22:04] Running stage: researcher
+  [14:22:12] Stage complete: researcher (tokens so far: 2341)
+  [14:22:12] Running stage: writer
+  [14:22:22] Stage complete: writer (tokens so far: 4105)
+  ```
+- A summary table prints with columns: Agent, Tokens, Output preview.
+- The final draft panel shows a polished ~800-word blog post about Python's GIL removal.
+- Total elapsed time and total tokens appear at the bottom.
 
-3. Build the pipeline runner: a function that executes the chain in order
-   and returns the final context dict.
-
-4. Add validation between stages: after each agent, assert that the expected
-   context key is non-empty. If not, raise a `HandoffError` with details.
-
-5. Test with: "Write a technical blog post explaining why Python's GIL is
-   being removed and what it means for async code."
-
-Print a rich table showing: agent name, tokens used, output preview.
-
-**File:** `lab/src/handoff_chain.py`
+**Why this matters:**
+Handoff chains are the most common multi-agent pattern in production — document processing pipelines, ETL with LLM enrichment, and content generation all use this shape. The `HandoffError` validation between stages prevents the silent context-loss failures that plague real systems when one stage produces empty output and the next stage hallucinates to fill the gap.
 
 ---
 
 ### Lab 10C: Peer Debate
 
-**Goal:** Build a 2-agent debate system with a judge.
+**Goal:** Build a 2-agent debate system with a judge to explore trade-offs in a technical decision.
 
-**Tasks:**
+**What to do:**
 
-1. Implement two advocate agents:
-   - `advocate_for(position, context)` — argues in favor of a technical decision
-   - `advocate_against(position, context)` — argues against it
+1. Open `lab/src/peer_debate.py`. Find `advocate_for()` and `advocate_against()`
+   (both have TODO at Task 1). Update the system prompts to be round-specific:
+   round 1 should establish the strongest case, round 2 should directly counter
+   the opponent's points, round 3 should summarize memorably.
 
-2. The debate runs for 3 rounds:
-   - Round 1: each advocate makes their opening argument (no awareness of the other)
-   - Round 2: each advocate is shown the other's Round 1 argument and responds
-   - Round 3: each advocate makes a closing statement
+2. Find `judge_agent()` (TODO at Task 3). Consider whether the judge should
+   weigh later rounds more heavily and instruct it to state which round was
+   most decisive.
 
-3. Implement a judge agent that:
-   - Receives all 6 messages (3 rounds × 2 advocates)
-   - Returns: `{"winner": "for|against|tie", "reason": str, "key_points": list[str]}`
+3. Run:
+   ```bash
+   cd modules/module-10-multi-agent/lab
+   uv run python src/peer_debate.py
+   ```
 
-4. Test with: "Should we use a message queue (Kafka/Azure Service Bus) for
-   inter-service communication in our microservices architecture, or use
-   direct HTTP calls?"
+**Expected result:**
+- Three rounds of debate print with FOR (green) and AGAINST (red) panels:
+  ```
+  Round 1: Opening Statement
+  ┌─ FOR ──────────────────────────────────────────────────┐
+  │ Message queues provide natural resilience through       │
+  │ decoupling. When the order service publishes an event,  │
+  │ the inventory service can process it at its own pace... │
+  └────────────────────────────────────────────────────────┘
+  ┌─ AGAINST ──────────────────────────────────────────────┐
+  │ Direct HTTP calls offer immediate consistency and       │
+  │ simpler debugging. With a message queue, you trade      │
+  │ simplicity for eventual consistency...                  │
+  └────────────────────────────────────────────────────────┘
+  ```
+- After 3 rounds, the judge's verdict panel shows winner, reason, and key points.
+- Total debate time is ~15-25 seconds (7 LLM calls: 3 rounds x 2 advocates + 1 judge).
 
-5. Print the debate transcript with rich formatting: each round's arguments
-   side by side, then the judge's verdict.
-
-**File:** `lab/src/peer_debate.py`
+**Why this matters:**
+Debate patterns force the LLM to steelman both sides of a decision, producing higher-quality analysis than a single prompt. Production uses include architecture decision records, risk assessment, and code review where you want to surface trade-offs rather than a single opinion. The cost is 7+ LLM calls per decision — reserve this for high-stakes choices.
 
 ---
 
 ### Lab 10D: Agent Cards
 
-**Goal:** Make the orchestrator data-driven by reading Agent Cards.
+**Goal:** Replace hardcoded routing with data-driven Agent Cards loaded from JSON files.
 
-**Tasks:**
+**What to do:**
 
-1. Define Agent Card JSON files for each specialist (`cards/` directory):
-   - `code_reviewer.json`
-   - `security_analyst.json`
-   - `performance_advisor.json`
+1. Open `lab/src/cards/` and examine the three JSON files:
+   `code_reviewer.json`, `security_analyst.json`, `performance_advisor.json`.
+   Each has `name`, `description`, `skills`, `input_schema`, `output_schema`,
+   and `cost_tier` fields.
 
-   Each card must include: `name`, `description`, `skills`, `input_schema`,
-   `output_schema`, `cost_tier` ("low", "medium", "high").
+2. Open `lab/src/agent_cards.py`. Find `CardRegistry.find_best_match()` (TODO
+   at Task 2). Implement it by:
+   a. Building a summary string of all agent names + descriptions.
+   b. Calling `call_llm()` with a prompt asking for the best agent name.
+   c. Validating the returned name is in `list_agents()`.
 
-2. Build a card registry: a Python class that loads all cards from the
-   directory and provides:
-   - `list_agents()` → list of agent names
-   - `get_card(name)` → dict
-   - `find_best_match(query)` → uses LLM to pick the best agent given the query
+3. To test extensibility (Task 4), create `lab/src/cards/architecture_reviewer.json`
+   with the same schema — no orchestrator code changes needed.
 
-3. Refactor the orchestrator from Lab 10A to use the card registry for routing
-   instead of hardcoded logic. The orchestrator passes the cards' descriptions
-   to the LLM as routing context.
+4. Run:
+   ```bash
+   cd modules/module-10-multi-agent/lab
+   uv run python src/agent_cards.py
+   ```
 
-4. Add a new card for a new specialist (`architecture_reviewer`) without
-   changing any orchestrator code — verify routing works automatically.
+**Expected result:**
+- Step 1 shows three agent card panels with name, description, cost tier, and skills.
+- Step 2 lists: `['code_reviewer', 'performance_advisor', 'security_analyst']`.
+- Step 3 routes three demo queries and displays a table:
+  ```
+  ┌─ Routing Results ──────────────────────────────────────────┐
+  │ Query                                       │ Best match   │
+  ├─────────────────────────────────────────────┼──────────────┤
+  │ Is there a SQL injection vulnerability...   │ security_a…  │
+  │ This nested loop is taking 30 seconds...    │ performance… │
+  │ Can you review this function for readab...  │ code_review… │
+  └─────────────────────────────────────────────┴──────────────┘
+  ```
+- Step 4 explains how adding a new JSON card file extends routing with zero code changes.
 
-**File:** `lab/src/agent_cards.py`
+**Why this matters:**
+Agent Cards decouple routing policy from orchestrator code. In production, this means new specialists can be deployed by dropping a JSON file into a registry — the same pattern used by service meshes and API gateways. It also makes routing decisions auditable: you can inspect exactly what descriptions the LLM saw when it made a routing choice.
 
 ---
 
 ### Lab 10E: Failure Detection and Circuit Breaker
 
-**Goal:** Simulate and detect coordination failures.
+**Goal:** Detect delegation loops and prevent cascading failures with a circuit breaker state machine.
 
-**Tasks:**
+**What to do:**
 
-1. Implement a "looping agent" that always delegates back to the orchestrator
-   (simulating an oscillation failure).
+1. Open `lab/src/circuit_breaker.py`. Study `check_for_cycles()` — it uses
+   `Counter` to detect when any agent exceeds `max_calls` invocations.
 
-2. Add cycle detection to the orchestrator:
-   - Track the sequence of agent invocations for this task
-   - If any agent is invoked more than `max_calls` times (default: 2), raise
-     `CyclicDelegationError`
+2. Find `AgentCircuitBreaker.call()` (TODO at Task 2). Implement the 5-step
+   state machine described in its docstring: check OPEN state, record latency,
+   try the call, handle success (reset to CLOSED), handle failure (increment
+   count, transition to OPEN at threshold).
 
-3. Implement a circuit breaker class:
-   ```python
-   class AgentCircuitBreaker:
-       def __init__(self, max_failures: int, reset_timeout_seconds: int): ...
-       def call(self, agent_fn, *args) -> Any: ...
-       # Raises CircuitOpenError if agent has failed max_failures times recently
+3. Study `looping_agent()` — it always raises `ValueError`, simulating a
+   permanently broken subagent.
+
+4. Run:
+   ```bash
+   cd modules/module-10-multi-agent/lab
+   uv run python src/circuit_breaker.py
    ```
 
-4. Add invocation telemetry: after each agent call, log:
-   - Agent name
-   - Input context size (chars)
-   - Output context size (chars)
-   - Latency (ms)
-   - Success/failure
+**Expected result:**
+- Part A (cycle detection) shows two sequences:
+  ```
+  Sequence ['planner', 'researcher', 'writer'] → OK — no cycle detected
+  Sequence ['planner', 'researcher', 'planner', 'researcher', 'planner'] → CyclicDelegationError
+  ```
+- Part B calls `looping_agent` 5 times through the circuit breaker:
+  ```
+  Call 1 | state before: closed   → ValueError (agent failed)   → state after: closed
+  Call 2 | state before: closed   → ValueError (agent failed)   → state after: closed
+  Call 3 | state before: closed   → ValueError (agent failed)   → state after: open
+                                    State transition: closed → open
+  Call 4 | state before: open     → CircuitOpenError             → state after: open
+  Call 5 | state before: open     → CircuitOpenError             → state after: open
+  ```
+- The telemetry table shows 3 rows (calls 4 and 5 are rejected before invocation).
+- Calls 4 and 5 complete in <1ms because no LLM call is made.
 
-5. Test the circuit breaker: make the looping agent fail 3 times, verify
-   the circuit opens and subsequent calls are rejected without hitting the LLM.
-
-**File:** `lab/src/circuit_breaker.py`
+**Why this matters:**
+Without circuit breakers, a failing subagent consumes tokens and latency on every retry. In production multi-agent systems, one broken specialist can cascade into orchestrator timeouts and user-facing errors. The CLOSED/OPEN/HALF_OPEN state machine is the same pattern used by Polly (.NET), resilience4j (Java), and Azure API Management — understanding it here transfers directly.
 
 ---
 

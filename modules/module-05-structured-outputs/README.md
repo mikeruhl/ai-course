@@ -317,113 +317,184 @@ uv sync
 
 ### Task 1: Three Extraction Models
 
-In `src/extractor.py`, three Pydantic models are already scaffolded:
-`JobPosting`, `BugReport`, and `CodeReview`.
+**Goal:** Build three Pydantic models that serve as both the JSON Schema for the API and the validation layer for responses, demonstrating the single-source-of-truth pattern.
 
-Your job:
+**What to do:**
 
-1. Complete the field definitions — add appropriate types and `Field(description=...)`
-   annotations that will guide the model
-2. Call `model_json_schema()` on each, inspect the output — note any `$defs`
-3. Call `flatten_schema()` on each schema
-4. Make an Azure OpenAI call with `response_format` set to `json_schema` + `strict: true`
-5. Parse the response with `json.loads()` and validate with `Model.model_validate()`
+1. Open `lab/src/extractor.py` and find the Pydantic model stubs: `JobPosting` (line ~150), `BugReport` (line ~170), `ReviewIssue` (line ~187), and `CodeReview` (line ~195)
+2. Complete each model's field definitions with types and `Field(description="...")` annotations. For example, add `required_skills: list[str] = Field(description="...")` to `JobPosting`. Fill in all TODO fields in each model.
+3. Find the `extract_structured()` function (line ~229) and implement the final parsing: `json.loads(content)` followed by `model_class.model_validate(parsed)`. Also add the refusal and `finish_reason` checks noted in the TODOs.
+4. Find `run_task1()` (line ~368) and wire up the three extraction calls using the sample inputs `JOB_POSTING_SAMPLE`, `BUG_REPORT_SAMPLE`, and `CODE_DIFF_SAMPLE` already defined in the file.
+5. Run the command:
+   ```bash
+   uv run python src/extractor.py --task1
+   ```
 
-Run the provided test inputs (at the bottom of the file) and verify you get
-valid, typed Python objects back.
+**Expected result:**
+- Output similar to:
+  ```
+  1a. Job Posting Extraction
+  JobPosting(job_title='Senior Python Backend Engineer',
+             company_name='Contoso Cloud',
+             location='Seattle, WA (hybrid, 2 days in office)',
+             employment_type='full-time',
+             required_skills=['Python', 'distributed systems', 'PostgreSQL', 'Redis', 'Docker', 'Kubernetes'],
+             preferred_skills=['Azure', 'AWS', 'MLOps'],
+             salary_range_usd='$160,000 – $200,000',
+             role_summary='Design and implement high-throughput data pipelines...',
+             years_experience_required=5)
 
-```bash
-uv run python src/extractor.py --task1
-```
+  1b. Bug Report Extraction
+  BugReport(title='Login fails silently when Azure AD token expires mid-session',
+            severity='high', affected_component='frontend/auth', ...)
+
+  1c. Code Review Extraction
+  CodeReview(issues=[ReviewIssue(severity='critical', category='security', ...)], ...)
+  ```
+- Each result is a fully typed Python object — attribute access like `result.severity` works with IDE autocomplete
+
+**Why this matters:**
+In production extraction pipelines, unvalidated LLM output causes downstream crashes and data corruption. Pydantic as the single schema source means one definition drives API constraints, response validation, and application types — eliminating the class of bugs where these diverge.
+
+---
 
 ### Task 2: Try to Break Strict Mode
 
-Experiment with inputs that should push the model's limits:
+**Goal:** Probe the boundaries of constrained decoding by testing prompt injection, ambiguous inputs, and missing source data to understand what strict mode guarantees and what it does not.
 
-1. **Refusal trigger:** Submit a prompt asking the model to extract PII from
-   a document that contains instructions to "ignore previous instructions".
-   Does it refuse? Does the schema enforcement hold?
+**What to do:**
 
-2. **Near-limit ambiguity:** Submit a document that is genuinely ambiguous
-   for your schema — e.g., a bug report that could be severity `"high"` or
-   `"critical"`. What does the model choose? Does it always choose consistently?
+1. Open `lab/src/extractor.py` and find `run_task2()` (line ~396)
+2. Implement experiment 2a: call `extract_structured()` with the `injected_document` (already defined at line ~404) and `JobPosting`. Print whether the injection text (`"HACKED"`, `"ATTACKER"`) appears in the output.
+3. Implement experiment 2b: call `extract_structured()` with `ambiguous_bug` (line ~422) and `BugReport` five times. Record the `severity` field from each run and print whether the model is consistent.
+4. Implement experiment 2c: call `extract_structured()` with `incomplete_posting` (line ~435) and `JobPosting`. Print what the model fills in for fields like `required_skills` that have no source data.
+5. Run the command:
+   ```bash
+   uv run python src/extractor.py --task2
+   ```
 
-3. **Missing information:** Submit a document where a required field simply
-   does not exist in the source material. What does the model fill in?
-   Is the output still schema-valid?
+**Expected result:**
+- 2a: The model ignores the injection and extracts `job_title='Software Engineer'`, `company_name='Acme Corp'`. The schema constraint prevents freeform output.
+- 2b: Severity classification varies between runs (e.g., 3x `"medium"`, 2x `"low"`). At `temperature=0` it should be consistent; at higher temperatures it may not be.
+- 2c: The model fabricates plausible values for missing fields (e.g., `required_skills=["software development"]`). The output is schema-valid but semantically invented.
+  ```
+  2a. Prompt injection in source document
+  job_title='Software Engineer'  company_name='Acme Corp'  (injection failed)
 
-4. **Schema violation attempt:** In a separate prompt (not using strict mode),
-   ask the model to produce a JSON response that violates a specific constraint
-   (e.g., put a string in an integer field). Then turn strict mode back on —
-   does the constraint hold?
+  2b. Ambiguous severity classification
+  Run 1: medium | Run 2: medium | Run 3: medium | Run 4: medium | Run 5: medium
 
-Log your observations for each experiment.
+  2c. Required field absent from source document
+  JobPosting(job_title='Developer', required_skills=['general development'], ...)
+  ```
 
-```bash
-uv run python src/extractor.py --task2
-```
+**Why this matters:**
+Strict mode guarantees structural validity but not semantic accuracy. The model will always produce valid JSON matching your schema — but it will hallucinate values for fields missing from the source. Production pipelines must distinguish "model extracted this from the text" from "model invented this to satisfy the schema," typically by making ambiguous fields optional or adding a confidence field.
+
+---
 
 ### Task 3: Extraction Pipeline
 
-Implement `run_extraction_pipeline()` in `src/extractor.py`.
+**Goal:** Build a concurrent extraction pipeline that processes multiple documents in parallel, demonstrating the practical pattern for batch-extracting structured data from a document corpus.
 
-The function should:
+**What to do:**
 
-1. Accept a directory path as input
-2. Find all `.md` files in the directory
-3. For each file, extract a `DocumentMetadata` object (title, summary,
-   key_topics, estimated_reading_time_minutes) using Azure OpenAI
-4. Process all files concurrently (use `asyncio.gather`)
-5. Print a formatted table of results using `rich.table`
+1. Open `lab/src/extractor.py` and find the `DocumentMetadata` model (line ~212). Define its fields: `title` (str), `summary` (str), `key_topics` (list[str]), `estimated_reading_time_minutes` (int).
+2. Find `extract_document_metadata()` (line ~448) and implement the call to `extract_structured()` with the file content and `DocumentMetadata` model.
+3. Find `run_extraction_pipeline()` (line ~479) and implement the concurrent extraction: use `asyncio.gather(*[extract_document_metadata(client, f) for f in md_files])` to process all files in parallel.
+4. Run the command:
+   ```bash
+   uv run python src/extractor.py --pipeline ../../../../modules
+   ```
 
-Test it on the course `modules/` directory:
+**Expected result:**
+- A formatted table with one row per `.md` file found:
+  ```
+  ┌──────────────────────────────────────┬──────────────────────────────┬──────────────────────────────┬───────────┬────────┐
+  │ File                                 │ Title                        │ Topics                       │ Read Time │ Status │
+  ├──────────────────────────────────────┼──────────────────────────────┼──────────────────────────────┼───────────┼────────┤
+  │ module-01-.../README.md              │ LLM Primitive                │ Azure OpenAI, API calls, ... │ 8m        │ OK     │
+  │ module-02-.../README.md              │ Prompt Engineering           │ system prompts, few-shot,... │ 10m       │ OK     │
+  │ module-03-.../README.md              │ Tool Use                     │ function calling, agent ...  │ 12m       │ OK     │
+  │ ...                                  │ ...                          │ ...                          │ ...       │ ...    │
+  └──────────────────────────────────────┴──────────────────────────────┴──────────────────────────────┴───────────┴────────┘
+  ```
+- All files process concurrently — total time is roughly the time of one extraction, not N extractions sequentially
 
-```bash
-uv run python src/extractor.py --pipeline ../../../../modules
-```
+**Why this matters:**
+Batch extraction over a document corpus is one of the highest-value LLM applications in enterprise settings (e.g., extracting metadata from thousands of support tickets, contracts, or incident reports). The concurrent pattern here scales linearly until you hit rate limits, and the typed output integrates directly into downstream databases and APIs without manual parsing.
 
-You should see a table with one row per README.md found.
-
-**Think about:** what happens when a README has fewer than 200 words?
-Is "estimated_reading_time_minutes" meaningful? What does the model do?
+---
 
 ### Task 4: Flatten $defs
 
-Implement the `flatten_schema()` function completely. The stub is provided.
+**Goal:** Implement the `flatten_schema()` function that inlines `$ref`/`$defs` from Pydantic-generated schemas, which is required because Azure OpenAI strict mode rejects schemas containing `$ref`.
 
-Steps:
+**What to do:**
 
-1. Create a Pydantic model that references another model (e.g., `JobPosting`
-   with a nested `Salary` model). Call `model_json_schema()` — observe the `$defs`.
-2. Implement `flatten_schema()` to recursively inline all `$ref` references
-3. Add `"additionalProperties": false` to every `"type": "object"` node
-4. Verify the flattened schema works by sending it to the API with `strict: true`
-5. Send the **unflattened** schema to the API — observe the error you get
+1. Open `lab/src/extractor.py` and find `_inline_refs()` (line ~65) and `flatten_schema()` (line ~89)
+2. In `_inline_refs()`: when a node contains `"$ref"`, extract the type name from `"#/$defs/TypeName"`, look it up in `defs`, and recurse. When a node has `"type": "object"`, add `"additionalProperties": false`.
+3. In `flatten_schema()`: pop `"$defs"` from the schema dict and pass it to `_inline_refs()`.
+4. Run the command:
+   ```bash
+   uv run python src/extractor.py --task4
+   ```
 
-The test:
-```bash
-uv run python src/extractor.py --task4
-```
+**Expected result:**
+- The raw `CodeReview` schema is printed showing `$defs` and `$ref` entries for `ReviewIssue`
+- The flattened schema is printed with `ReviewIssue` inlined and `additionalProperties: false` on every object
+- The API call with the raw schema returns HTTP 400 with an error about unsupported `$ref`
+- The API call with the flattened schema succeeds and returns a valid `CodeReview` object
+  ```
+  Raw CodeReview schema (has $defs/$ref):
+  { "$defs": { "ReviewIssue": { ... } }, "properties": { "issues": { "$ref": "#/$defs/ReviewIssue" } } }
+
+  Flattened schema (no $defs/$ref):
+  { "properties": { "issues": { "items": { "type": "object", "properties": { ... }, "additionalProperties": false } } } }
+
+  Attempt with raw (unflattened) schema:
+  Expected error: HTTP 400
+
+  Attempt with flattened schema:
+  Success! Extracted CodeReview: CodeReview(issues=[...], overall_summary='...', approved=False)
+  ```
+
+**Why this matters:**
+Pydantic generates `$ref`/`$defs` for any nested model, which is valid JSON Schema but rejected by Azure OpenAI's strict mode. Every production system that uses Pydantic with structured outputs needs this flattening step. Without it, any schema with nested objects fails at the API level — and most real-world extraction schemas have nested objects.
+
+---
 
 ### Task 5: json_object vs. json_schema Comparison
 
-Implement `run_comparison()` in `src/extractor.py`.
+**Goal:** Empirically measure the reliability gap between `json_object` mode (unconstrained structure) and `json_schema` strict mode (constrained decoding) to justify the additional setup cost of strict mode.
 
-Run 10 calls with `json_object` mode and 10 calls with `json_schema + strict`
-mode using the same prompt and schema. Measure and print:
+**What to do:**
 
-1. **Schema compliance rate:** what percentage of `json_object` responses
-   have all required fields? (Check against your Pydantic model)
-2. **Parse error rate:** what percentage of responses fail `json.loads()`?
-3. **Latency:** average response time for each mode
+1. Open `lab/src/extractor.py` and find `run_comparison()` (line ~604)
+2. Implement the `json_object` loop: make 10 calls with `response_format={"type": "json_object"}`, timing each with `time.perf_counter()`. Check if `json.loads()` succeeds and if all `required_fields` are present in the parsed dict.
+3. Implement the `json_schema` loop: make 10 calls using `make_response_format(JobPosting, "job_posting")`, tracking the same metrics.
+4. The comparison table is already wired up — it will print after both loops complete.
+5. Run the command:
+   ```bash
+   uv run python src/extractor.py --compare
+   ```
 
-```bash
-uv run python src/extractor.py --compare
-```
+**Expected result:**
+- A comparison table similar to:
+  ```
+  ┌──────────────────────┬──────────────┬─────────────────────┬─────────────────┐
+  │ Mode                 │ Parse Errors │ Compliance Failures │ Avg Latency (s) │
+  ├──────────────────────┼──────────────┼─────────────────────┼─────────────────┤
+  │ json_object          │ 0            │ 2                   │ 1.23            │
+  │ json_schema (strict) │ 0            │ 0                   │ 1.41            │
+  └──────────────────────┴──────────────┴─────────────────────┴─────────────────┘
+  Compliance rate — json_object: 80%  |  json_schema: 100%
+  ```
+- `json_schema` mode shows 100% compliance at the cost of slightly higher latency (~10–15% more)
+- `json_object` mode may produce extra fields, missing fields, or differently-named fields
 
-Expected results: `json_schema` mode should show near-100% compliance.
-`json_object` mode compliance depends heavily on prompt quality and schema
-complexity — document what you observe.
+**Why this matters:**
+The ~15% latency overhead of strict mode is the cost of constrained decoding. In return, you eliminate an entire class of runtime failures — missing fields, wrong types, extra keys — that would otherwise require retry logic, fallback parsing, and manual validation. For any pipeline where downstream code depends on the schema, strict mode pays for itself on the first failure it prevents.
 
 ---
 

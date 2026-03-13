@@ -199,21 +199,109 @@ cd lab && uv sync
 
 ### Task A: Event-Sourced Agent
 
-Build an agent that logs every action (message, tool call, response) to an
-append-only event log. Simulate a crash, then recover by replaying the
-event log to reconstruct state.
+**Goal:** Demonstrate that an agent's full state can be reconstructed from an append-only event log after a crash.
+
+**What to do:**
+1. Open `lab/src/durable_patterns.py` and read the `EventSourcedAgent` class (line ~70) and the `task_a` function (line ~118)
+2. Trace how `append_event` records every action and `replay` reconstructs `messages`, `tool_results`, and `step_count` from the log
+3. Run:
+   ```bash
+   cd lab && uv run durable --task A
+   ```
+
+**Expected result:**
+- Two LLM responses about agent memory types and episodic memory
+- Event log saved to `./checkpoints/event_log.json` with 6+ events
+- A "SIMULATED CRASH" message followed by recovery output showing the recovered agent with the correct step count and message count
+- An Event Log table listing each event by index, type (`message_added`, `tool_executed`, `response_generated`), and data preview
+
+```
+Step 1 response: Agent memory can be categorized into three main types...
+Step 2 response: Episodic memory in agents refers to the storage of...
+
+--- SIMULATED CRASH ---
+
+Recovered agent: 3 steps, 4 messages
+```
+
+**Why this matters:**
+Event sourcing gives you a full audit trail and crash recovery by replaying a deterministic log. In production, this is how systems like Temporal and Azure Durable Functions recover orchestrators — they replay the event history rather than persisting mutable state.
 
 ### Task B: Checkpoint-Resume
 
-Implement a multi-step research agent that saves a checkpoint to disk after
-each step. Simulate a crash mid-task, then resume from the checkpoint and
-complete the remaining steps.
+**Goal:** Show that a multi-step agent can save progress to disk and resume from the last completed step after a crash.
+
+**What to do:**
+1. Open `lab/src/durable_patterns.py` and read the `CheckpointAgent` class (line ~180) and `task_b` function (line ~230)
+2. Follow the `run` method — note how it saves a `Checkpoint` (task_id, current_step, results, messages) to JSON after every step, and how `simulate_crash_at` halts execution early
+3. Run:
+   ```bash
+   cd lab && uv run durable --task B
+   ```
+
+**Expected result:**
+- Run 1 completes steps 1 and 2, then crashes at step 3
+- Run 2 loads the checkpoint, reports "resuming from step 3", and completes steps 3 and 4
+- A Final Results table showing all four step results
+
+```
+Run 1 — will crash at step 3:
+  Step 1/4: What are the 3 main cloud providers for AI workloads?
+  Result: The three main cloud providers are Azure, AWS, and Google Cloud...
+  Step 2/4: Compare their managed LLM services.
+  Result: Azure offers Azure OpenAI Service, AWS has Amazon Bedrock...
+  Step 3/4: Which one has the best support for multi-agent systems?
+  CRASH at step 3!
+
+Run 2 — resuming from checkpoint:
+Checkpoint found: True, resuming from step 3
+  Step 3/4: Which one has the best support for multi-agent systems?
+  Result: Azure currently has the strongest multi-agent support with...
+  Step 4/4: Summarize your findings in a table format.
+  Result: | Provider | LLM Service | Multi-Agent | ...
+```
+
+**Why this matters:**
+Checkpointing is simpler than full event sourcing and sufficient for most agent workloads. The key design decision is checkpoint granularity — this lab checkpoints per step, which balances durability against write overhead. In production, serializing the full conversation to a blob or database after each tool call is the most common pattern.
 
 ### Task C: Saga Pattern
 
-Build a multi-step agent workflow (create account, provision workspace, send
-email, setup billing). Simulate a failure at the billing step, then watch
-the saga compensate (undo) all previous steps in reverse order.
+**Goal:** Demonstrate that when a multi-step workflow with side effects fails partway through, completed steps must be undone in reverse order.
+
+**What to do:**
+1. Open `lab/src/durable_patterns.py` and read the `SagaOrchestrator` class (line ~286) and `task_c` function (line ~327)
+2. Examine the four `SagaStep` definitions — each has an `action` prompt and a `compensation` prompt. Note how `compensate` iterates `self.completed` in reverse
+3. Run:
+   ```bash
+   cd lab && uv run durable --task C
+   ```
+
+**Expected result:**
+- Steps 1-3 (create account, provision workspace, send welcome email) execute successfully
+- Step 4 (setup billing) fails, triggering compensation
+- Compensation runs in reverse: undo email, undo workspace, undo account
+- A Saga Execution Summary table showing steps 1-3 as executed + compensated, step 4 as not executed
+
+```
+Executing: Create user account
+  Done: User account for john@example.com has been created...
+Executing: Provision workspace
+  Done: Workspace 'johns-workspace' created with default settings...
+Executing: Send welcome email
+  Done: Welcome email sent to john@example.com...
+Executing: Setup billing
+  FAILURE at 'Setup billing' — triggering compensation
+
+Compensating 3 steps in reverse...
+  Compensated 'Send welcome email': Cancellation email sent...
+  Compensated 'Provision workspace': Workspace deleted...
+  Compensated 'Create user account': User account deleted...
+
+Saga completed: False
+```
+
+**Why this matters:**
+Agent actions often have real-world side effects (sending emails, creating resources, charging payment methods). Unlike a database transaction, you cannot roll back an already-sent email. The saga pattern makes compensating actions explicit and ensures they run in the correct reverse order. Any production agent that performs multi-step mutations needs this pattern or something equivalent.
 
 ### Terraform (Azure Functions + Storage)
 

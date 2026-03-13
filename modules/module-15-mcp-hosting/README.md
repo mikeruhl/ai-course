@@ -239,139 +239,185 @@ uv sync
 
 ### Task 1: Convert to HTTP+SSE
 
-File: `lab/src/server.py`
+**Goal:** Convert an MCP server from subprocess-based stdio to network-based HTTP+SSE transport, demonstrating that tool logic is transport-agnostic.
 
-Copy your module-14 `openai_server.py` as the starting point, then:
-
-1. Change the `mcp.run()` call to use `transport="sse"`, `host="0.0.0.0"`, `port=8080`
-2. Test locally:
+**What to do:**
+1. Open `lab/src/server.py` — the entrypoint section is at line 193. The transport change is already done: `mcp.run(transport="sse", host=HOST, port=PORT)` where `HOST` defaults to `"0.0.0.0"` and `PORT` to `8080` (configurable via `MCP_HOST`/`MCP_PORT` env vars)
+2. Copy your completed tool, resource, and prompt implementations from module-14's `openai_server.py` into the corresponding TODO stubs (lines 70, 94, 110, 136, 143, 150, 161, 167 — each says `"Copy from module-14"`)
+3. Run locally:
    ```bash
    uv run python src/server.py &
    # In another terminal:
    npx @modelcontextprotocol/inspector http://localhost:8080/sse
    ```
-3. Verify all tools, resources, and prompts work identically to the stdio version
 
-The SSE endpoint is `GET /sse`. The Inspector knows to use this URL format when
-you give it an HTTP URL instead of a command to spawn.
+**Expected result:**
+- The server starts and logs: `Uvicorn running on http://0.0.0.0:8080`
+- MCP Inspector connects to `http://localhost:8080/sse` and shows all tools, resources, and prompts
+- Calling `count_tokens` with `"hello world"` returns `2` — identical to the stdio version
+- `curl -N http://localhost:8080/sse` shows the SSE stream opening with `event: endpoint` data
+
+**Why this matters:**
+- The stdio-to-SSE switch is a two-line change, but it unlocks multi-client access, remote deployment, and horizontal scaling. In production, you run HTTP+SSE behind a load balancer so multiple agents (CI bots, developer tools, dashboards) share one MCP server instance instead of each spawning their own subprocess.
 
 ### Task 2: Containerise
 
-File: `lab/Dockerfile`
+**Goal:** Package the MCP server as a Docker container using a multi-stage build, then push it to Azure Container Registry.
 
-Build and test locally:
+**What to do:**
+1. Open `lab/Dockerfile` — review the multi-stage build: stage 1 (`builder`) installs dependencies with `uv sync --no-dev --frozen`, stage 2 copies the venv and source
+2. Build and test locally:
+   ```bash
+   docker build -t mcp-openai-server:latest .
 
-```bash
-# Build
-docker build -t mcp-openai-server:latest .
+   docker run -p 8080:8080 \
+     -e AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT \
+     -e AZURE_OPENAI_KEY=$AZURE_OPENAI_KEY \
+     -e AZURE_OPENAI_DEPLOYMENT=$AZURE_OPENAI_DEPLOYMENT \
+     -e AZURE_OPENAI_API_VERSION=$AZURE_OPENAI_API_VERSION \
+     mcp-openai-server:latest
+   ```
+3. Verify with Inspector:
+   ```bash
+   npx @modelcontextprotocol/inspector http://localhost:8080/sse
+   ```
+4. Push to ACR:
+   ```bash
+   REGISTRY=$(terraform -chdir=terraform output -raw registry_login_server)
+   REGISTRY_USER=$(terraform -chdir=terraform output -raw registry_admin_username)
+   REGISTRY_PASS=$(az acr credential show --name ${REGISTRY%%.*} --query passwords[0].value -o tsv)
 
-# Test locally (pass your .env values)
-docker run -p 8080:8080 \
-  -e AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT \
-  -e AZURE_OPENAI_KEY=$AZURE_OPENAI_KEY \
-  -e AZURE_OPENAI_DEPLOYMENT=$AZURE_OPENAI_DEPLOYMENT \
-  -e AZURE_OPENAI_API_VERSION=$AZURE_OPENAI_API_VERSION \
-  mcp-openai-server:latest
+   docker login $REGISTRY -u $REGISTRY_USER -p $REGISTRY_PASS
+   docker tag mcp-openai-server:latest $REGISTRY/mcp-openai-server:latest
+   docker push $REGISTRY/mcp-openai-server:latest
+   ```
 
-# Verify in Inspector
-npx @modelcontextprotocol/inspector http://localhost:8080/sse
-```
+**Expected result:**
+- `docker build` completes with a final image size under 200MB (the multi-stage build excludes build tools)
+- `docker run` starts the server; Inspector connects and tools work identically to the non-containerized version
+- `docker push` succeeds; the image appears in ACR:
+  ```
+  mcp-openai-server  latest  sha256:abc123...  2 minutes ago
+  ```
 
-Then push to Azure Container Registry:
-
-```bash
-# Get registry details from terraform output
-REGISTRY=$(terraform -chdir=terraform output -raw registry_login_server)
-REGISTRY_USER=$(terraform -chdir=terraform output -raw registry_admin_username)
-REGISTRY_PASS=$(az acr credential show --name ${REGISTRY%%.*} --query passwords[0].value -o tsv)
-
-docker login $REGISTRY -u $REGISTRY_USER -p $REGISTRY_PASS
-docker tag mcp-openai-server:latest $REGISTRY/mcp-openai-server:latest
-docker push $REGISTRY/mcp-openai-server:latest
-```
+**Why this matters:**
+- Multi-stage builds keep runtime images small and free of build-time tools (uv, pip, compilers), reducing attack surface and cold-start time. Testing the container locally before pushing catches environment issues (missing files, wrong paths, missing env vars) before they surface in a cloud deployment where debugging is slower.
 
 ### Task 3: Deploy to Container Apps
 
-The Terraform in this module provisions a Container App with a placeholder image.
-Update it to use your real image:
+**Goal:** Deploy the containerized MCP server to Azure Container Apps with HTTPS ingress and verify remote connectivity.
 
-```bash
-# Update the container app to use your pushed image
-az containerapp update \
-  --name mcp-server \
-  --resource-group <your-rg> \
-  --image $REGISTRY/mcp-openai-server:latest
-```
+**What to do:**
+1. The Terraform in this module provisions a Container App with a placeholder image. Update it to use your pushed image:
+   ```bash
+   az containerapp update \
+     --name mcp-server \
+     --resource-group <your-rg> \
+     --image $REGISTRY/mcp-openai-server:latest
+   ```
+   Alternatively, update `terraform/main.tf` to set the image reference and run `terraform apply`.
+2. Get the deployed URL and verify:
+   ```bash
+   MCP_URL=$(terraform -chdir=terraform output -raw mcp_server_url)
+   npx @modelcontextprotocol/inspector $MCP_URL/sse
+   ```
 
-Or update `terraform/main.tf` to point to your image and re-apply.
+**Expected result:**
+- Container Apps provisions a TLS-terminated HTTPS endpoint like `https://mcp-server.<hash>.azurecontainerapps.io`
+- `curl -i $MCP_URL/sse` returns HTTP 200 with `Content-Type: text/event-stream`
+- MCP Inspector connects to the remote server and all tools work:
+  ```
+  Connected to: azure-openai-server-http
+  Tools: count_tokens, chat_completion, search_azure_openai, ...
+  ```
 
-Verify:
-```bash
-MCP_URL=$(terraform -chdir=terraform output -raw mcp_server_url)
-npx @modelcontextprotocol/inspector $MCP_URL/sse
-```
+**Why this matters:**
+- Container Apps gives you HTTPS, autoscaling, and managed infrastructure without configuring Nginx, TLS certificates, or Kubernetes manifests. The MCP server transitions from a local developer tool to a shared team resource accessible from any network location. Scale-to-zero means you only pay when agents are actively calling tools.
 
 ### Task 4: Store Secrets in Key Vault
 
-The Terraform creates a Key Vault and a placeholder secret. Update it with
-your real OpenAI API key:
+**Goal:** Move the Azure OpenAI API key from environment variables into Key Vault, using managed identity for credential-free secret access.
 
-```bash
-KV_URI=$(terraform -chdir=terraform output -raw key_vault_uri)
+**What to do:**
+1. Store the secret in Key Vault:
+   ```bash
+   KV_URI=$(terraform -chdir=terraform output -raw key_vault_uri)
 
-az keyvault secret set \
-  --vault-name ${KV_URI#https://} \
-  --name openai-api-key \
-  --value "$AZURE_OPENAI_KEY"
-```
+   az keyvault secret set \
+     --vault-name ${KV_URI#https://} \
+     --name openai-api-key \
+     --value "$AZURE_OPENAI_KEY"
+   ```
+2. The Terraform already configures the Container App with a Key Vault secret reference and a user-assigned managed identity with "Key Vault Secrets User" role. Re-apply to wire it up:
+   ```bash
+   terraform apply
+   ```
+3. Verify the server still works — your code reads `os.environ["AZURE_OPENAI_KEY"]` unchanged; Azure injects the value at runtime:
+   ```bash
+   npx @modelcontextprotocol/inspector $MCP_URL/sse
+   # Call chat_completion — should succeed using the Key Vault-sourced key
+   ```
 
-Then update the Container App to read the key from Key Vault instead of an
-environment variable. In `terraform/main.tf`, the container app is already
-configured with a Key Vault secret reference — re-apply after setting the secret:
+**Expected result:**
+- `az keyvault secret show --vault-name <name> --name openai-api-key` shows the secret exists
+- The Container App's env var `AZURE_OPENAI_KEY` resolves to the Key Vault value at runtime (not visible in `az containerapp show` output — it shows `secretref:openai-key`)
+- `chat_completion` returns a valid LLM response, proving the secret was injected correctly
 
-```bash
-terraform apply
-```
-
-Verify the container can still reach Azure OpenAI (the managed identity handles
-Key Vault access; your server code reads `AZURE_OPENAI_KEY` as before).
+**Why this matters:**
+- API keys in environment variables leak through CI logs, Terraform state, `docker inspect`, and crash dumps. Key Vault references mean the plaintext key never appears in your infrastructure configuration. The managed identity (user-assigned, so it survives resource recreation) authenticates to Key Vault without any credential exchange your code needs to manage.
 
 ### Task 5: Add Authentication
 
-Configure Container Apps built-in auth to require Azure AD tokens:
+**Goal:** Add OAuth 2.0 authentication via Container Apps EasyAuth so unauthenticated requests are rejected before reaching your server code.
 
-```bash
-# Create an App Registration for your MCP server
-APP_ID=$(az ad app create \
-  --display-name "mcp-server-auth" \
-  --query appId -o tsv)
+**What to do:**
+1. Create an Azure AD App Registration:
+   ```bash
+   APP_ID=$(az ad app create \
+     --display-name "mcp-server-auth" \
+     --query appId -o tsv)
+   ```
+2. Configure EasyAuth on the Container App:
+   ```bash
+   az containerapp auth microsoft update \
+     --name mcp-server \
+     --resource-group <your-rg> \
+     --client-id $APP_ID \
+     --tenant-id $(az account show --query tenantId -o tsv) \
+     --yes
 
-# Configure EasyAuth
-az containerapp auth microsoft update \
-  --name mcp-server \
-  --resource-group <your-rg> \
-  --client-id $APP_ID \
-  --tenant-id $(az account show --query tenantId -o tsv) \
-  --yes
+   az containerapp auth update \
+     --name mcp-server \
+     --resource-group <your-rg> \
+     --unauthenticated-client-action Return401
+   ```
+3. Test rejection (no token):
+   ```bash
+   curl -i $MCP_URL/sse
+   ```
+4. Test acceptance (valid token):
+   ```bash
+   TOKEN=$(az account get-access-token --resource $APP_ID --query accessToken -o tsv)
+   curl -i -H "Authorization: Bearer $TOKEN" $MCP_URL/sse
+   ```
 
-az containerapp auth update \
-  --name mcp-server \
-  --resource-group <your-rg> \
-  --unauthenticated-client-action Return401
-```
+**Expected result:**
+- Unauthenticated request returns:
+  ```
+  HTTP/1.1 401 Unauthorized
+  WWW-Authenticate: Bearer
+  ```
+- Authenticated request returns:
+  ```
+  HTTP/1.1 200 OK
+  Content-Type: text/event-stream
+  event: endpoint
+  data: /messages?session_id=...
+  ```
+- Your server code (`server.py`) has zero auth-related changes — EasyAuth is a reverse proxy layer
 
-Test rejection:
-```bash
-curl -i $MCP_URL/sse
-# Expect: HTTP/1.1 401 Unauthorized
-```
-
-Test acceptance:
-```bash
-TOKEN=$(az account get-access-token --resource $APP_ID --query accessToken -o tsv)
-curl -i -H "Authorization: Bearer $TOKEN" $MCP_URL/sse
-# Expect: HTTP 200 with SSE stream starting
-```
+**Why this matters:**
+- EasyAuth moves authentication to the infrastructure layer, which means your MCP server code stays focused on tool logic. Token validation, JWKS fetching, and 401 responses are handled before a request reaches your container. This separation means you can change auth providers (Entra ID, Auth0, Okta) without touching tool implementations.
 
 ---
 

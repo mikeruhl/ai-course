@@ -167,99 +167,223 @@ uv run python src/plan_execute.py
 
 ### Task 1: Plan-and-Execute
 
-Implement the Plan-and-Execute pattern for a document research task.
+**Goal:** Implement the Plan-and-Execute pattern to separate planning from execution, demonstrating how a global plan reduces wasted steps compared to reactive agents.
 
-In `src/plan_execute.py`:
+**What to do:**
+1. Open `lab/src/plan_execute.py`
+2. Implement `PlannerAgent.create_plan()` (line ~157): call the model with `PLANNER_SYSTEM` prompt and the goal, parse the JSON array response into a list of step strings. Handle JSON parse failures with a fallback 3-step plan.
+3. Implement `PlannerAgent.revise_plan()` (line ~169): build a prompt showing the original plan, completed steps with results (first 200 chars each), and remaining steps. Call the model with `REVISE_PLANNER_SYSTEM`, parse the returned JSON array as the updated remaining steps.
+4. Implement `ExecutorAgent.execute_step()` (line ~204): run a tool-calling loop with `EXECUTOR_TOOLS` (max 5 iterations per step), dispatch to `tool_search()` or `tool_write_section()` based on function name, return the final content when `finish_reason == "stop"`.
+5. Complete the orchestrator TODO blocks in `run_plan_execute()` (line ~236): wire up `executor.execute_step()`, call `planner.revise_plan()` every 2 steps, track revisions.
+6. Run:
+   ```bash
+   cd modules/module-07-planning-patterns/lab
+   uv run python src/plan_execute.py
+   ```
 
-1. `PlannerAgent.create_plan(goal)` — calls the model and returns a list of numbered steps
-2. `ExecutorAgent.execute_step(step, context)` — executes one step using tools, returns result
-3. `PlannerAgent.revise_plan(original_plan, completed_steps, observations)` — optionally revises remaining steps based on what's been learned
-4. `run_plan_execute(goal)` — orchestrates the full loop
+**Expected result:**
+- Phase 1 prints an initial plan with 5+ steps:
+  ```
+  Phase 1: Planning
+  Initial Plan:
+    1. Search for underlying causes of WWI (MAIN acronym)
+    2. Search for the assassination of Franz Ferdinand
+    3. Search for the alliance cascade and mobilization
+    4. Write section: Underlying Causes
+    5. Write section: The Assassination
+    6. Write section: The Alliance Cascade
+    7. Review and assemble final outline
+  ```
+- Phase 2 executes each step, printing tool calls and results:
+  ```
+  Executing step 1: Search for underlying causes of WWI
+  Result: WWI causes include: nationalism (especially in the Balkans)...
+  Executing step 2: Search for the assassination of Franz Ferdinand
+  Result: The assassination of Archduke Franz Ferdinand in Sarajevo on 28 June 1914...
+  Checking if plan needs revision...
+  Plan revised — updated remaining steps.
+  ```
+- Phase 3 shows written sections stored by `tool_write_section()` in the `written_sections` dict
+- The planner revises at least once (the `revised_count` increments)
+- The `written_sections` dict contains at least 3 entries
 
-Test goal: *"Research and outline a 3-section report on the causes of World War I."*
-
-The executor has access to: `search(query)`, `write_section(title, content)`.
-
-Print the initial plan before execution starts. Print each step as it executes. After execution, print the final revised plan (if it changed).
-
-**Checkpoint:** The planner creates a plan with at least 5 steps. The executor runs each step. The planner revises at least once during execution.
+**Why this matters:**
+Plan-and-Execute is the standard pattern for multi-step workflows where order matters (report writing, data pipelines, deployment sequences). The re-planning loop is critical — it handles the reality that execution reveals information that invalidates the original plan. This is how production document-generation and research agents work.
 
 ### Task 2: Reflexion for Code Generation
 
-Implement the Reflexion loop for code generation with automated evaluation.
+**Goal:** Implement the Reflexion loop — generate, evaluate, critique, retry — for code generation with automated test evaluation.
 
-In `src/reflexion.py`:
+**What to do:**
+1. Open `lab/src/reflexion.py`
+2. Implement `generate_code()` (line ~135): call the model with `GENERATOR_SYSTEM` prompt and the problem description, return the text content (function definition only).
+3. Implement `refine_code()` (line ~146): call the model with `REFLEXION_SYSTEM` prompt and a user message containing the problem, previous code, and error feedback. Return the corrected function code.
+4. Implement `evaluate_code()` (line ~163): combine `code` + `test_harness` into a temp `.py` file, run it with `subprocess.run([sys.executable, tmpfile], capture_output=True, text=True, timeout=10)`. Return `(True, "All tests passed")` if `returncode == 0` and stdout contains `"ALL TESTS PASSED"`, otherwise return `(False, stderr_or_stdout)`. Handle `subprocess.TimeoutExpired`.
+5. Complete the TODO blocks in `run_reflexion()` (line ~181): call `generate_code()` on first attempt, `refine_code()` on subsequent attempts, and `evaluate_code()` after each generation.
+6. Run:
+   ```bash
+   uv run python src/reflexion.py
+   ```
 
-1. `generate_code(problem)` — generates a Python solution
-2. `evaluate_code(code, problem)` — runs the code in a subprocess, captures stdout/stderr, returns `(passed: bool, feedback: str)`
-3. `run_reflexion(problem, max_attempts=3)` — generates code, evaluates, feeds errors back, tries again
+**Expected result:**
+- Each problem shows attempt-by-attempt progress:
+  ```
+  Problem 1: reverse_words
+  Attempt 1/3
+   1 │ def reverse_words(s: str) -> str:
+   2 │     return ' '.join(s.split()[::-1])
+  PASSED on attempt 1
 
-Coding problems to test:
-- "Write a function `reverse_words(s)` that reverses the order of words in a string"
-- "Write a function `flatten(nested)` that flattens a nested list to one level"
-- "Write a function `count_vowels(s)` that counts vowels (case-insensitive)"
+  Problem 2: flatten
+  Attempt 1/3
+   1 │ def flatten(nested: list) -> list:
+   2 │     result = []
+   3 │     for item in nested:
+   4 │         if isinstance(item, list):
+   5 │             result.extend(item)
+   6 │         else:
+   7 │             result.append(item)
+   8 │     return result
+  PASSED on attempt 1
 
-For each problem, print attempt number, the generated code, whether it passed, and (if failed) the error feedback.
+  Problem 3: count_vowels
+  Attempt 1/3
+  ...
+  PASSED on attempt 1
+  ```
+- The summary shows pass rate: `Problems passed: 3/3` (or at least 2/3)
+- If a problem fails on attempt 1, the error feedback is printed and the model self-corrects on attempt 2 or 3
+- On at least 2 of 3 problems, Reflexion either passes on first attempt or self-corrects within 3 attempts
 
-**Checkpoint:** On at least 2 of 3 problems, Reflexion either passes on first attempt or self-corrects within 3 attempts.
+**Why this matters:**
+Reflexion is the go-to pattern for quality-critical single outputs (code, documents, SQL queries). The key insight is that automated evaluation (running tests, linting, type-checking) is cheap and objective compared to LLM-as-judge. Production code generation agents almost always include a test-execution feedback loop.
 
 ### Task 3: 2-Level LATS
 
-Implement a simplified 2-level LATS for a reasoning task.
+**Goal:** Implement simplified LATS — generate candidate approaches, score them, execute the best one — to see how branching avoids naive first-choice errors.
 
-In `src/lats.py`:
+**What to do:**
+1. Open `lab/src/lats.py`
+2. Implement `generate_approaches()` (line ~66): call the model with `APPROACH_GENERATOR_SYSTEM` (format the `{n}` placeholder) and the question, parse the JSON array response into a list of approach strings. Provide fallback approaches if parsing fails.
+3. Implement `score_approach()` (line ~97): call the model with `SCORER_SYSTEM` and a user message containing the question and approach, parse the JSON response for `{"score": int, "reason": str}`. Default to `{"score": 5, "reason": "Could not evaluate"}` on parse failure.
+4. Implement `execute_approach()` (line ~122): call the model with `EXECUTOR_SYSTEM` and a user message containing the question and selected approach, return the text content.
+5. Complete the TODO blocks in `run_lats()` (line ~138): wire up the three phases — generate, score, execute.
+6. Run:
+   ```bash
+   uv run python src/lats.py
+   ```
 
-1. `generate_approaches(question, n=3)` — generates 3 candidate problem-solving approaches
-2. `score_approach(question, approach)` — uses the LLM to score the approach 0–10 (prompt: "Rate this approach for answering this question. Reply with a JSON: {score: int, reason: str}")
-3. `execute_approach(question, approach)` — runs the selected approach to get an answer
-4. `run_lats(question)` — generate candidates, score all, pick best, execute
+**Expected result:**
+- Three trick questions are tested. For the sheep puzzle, output looks like:
+  ```
+  Phase 1: Generating 3 approaches...
+    1. Approach 1: Take the numbers literally — subtract 9 from 17
+    2. Approach 2: Look for wordplay — "all but 9" means 9 remain
+    3. Approach 3: Consider whether "die" changes ownership or just count
 
-Test question: *"A farmer has 17 sheep. All but 9 die. How many are left? Explain the trick in this question."*
+  Phase 2: Scoring approaches...
+  ┌───┬────────┬──────────────────────────────────────────────────────────┬──────────────────────────────────────┐
+  │ # │ Score  │ Approach                                               │ Reason                               │
+  ├───┼────────┼──────────────────────────────────────────────────────── ┼──────────────────────────────────────┤
+  │ 1 │ 3/10   │ Take the numbers literally — subtract 9 from 17...     │ Falls for the trick in the wording   │
+  │ 2 │ 9/10   │ Look for wordplay — "all but 9" means 9 remain...     │ Correctly identifies the language... │
+  │ 3 │ 5/10   │ Consider whether "die" changes ownership...            │ Partially relevant but overthinks    │
+  └───┴────────┴────────────────────────────────────────────────────────┴──────────────────────────────────────┘
 
-Print all 3 candidate approaches with their scores. Show which one was selected and why. Print the final answer.
+  Phase 3: Selected approach (score 9/10): Look for wordplay...
+  Phase 4: Executing...
+  Final Answer: 9 sheep are left. The trick is that "all but 9 die" means 9 survive...
+  Total model calls: 5 (3 scoring + 1 generation + 1 execution)
+  ```
+- The scorer ranks the wordplay-aware approach highest for the sheep puzzle
+- For "pound of feathers vs pound of gold," the scorer identifies that both weigh a pound (or notes the troy ounce distinction)
 
-**Checkpoint:** The scoring correctly identifies a more nuanced approach over a naive literal interpretation approach (the "trick" is "all but 9 = 9 remaining").
+**Why this matters:**
+LATS prevents the common failure mode where an agent commits to a naive first interpretation and never recovers. The 2-level simplification (generate-score-execute) captures most of the benefit at 5 model calls instead of the exponential cost of full tree search. Use this when the first approach matters and evaluation is cheap.
 
 ### Task 4: Document Writing Agent (Plan-and-Execute)
 
-Build a full document-writing agent using Plan-and-Execute.
+**Goal:** Combine Plan-and-Execute with a Reflexion critique pass to build a full document-writing pipeline, demonstrating how production agents compose multiple patterns.
 
-In `src/doc_writer.py`:
+**What to do:**
+1. Create `lab/src/doc_writer.py` (this file does not yet exist — build it using the patterns from `plan_execute.py` and `reflexion.py` as reference)
+2. Implement an agent that, given a topic:
+   - Plans an outline using a planner LLM call (reuse the `PlannerAgent` pattern from `plan_execute.py`)
+   - Researches each section using a simulated `research(query)` tool
+   - Writes each section using a `write_section(title, content)` tool
+   - Assembles the full document from written sections
+   - Runs one Reflexion critique pass: call the LLM as a critic on the full draft, then call it again to revise based on the critique
+   - Prints each phase as it progresses
+3. Test topic: *"The role of artificial intelligence in modern software engineering"* (3 sections, ~150 words each)
+4. Run:
+   ```bash
+   uv run python src/doc_writer.py
+   ```
 
-Given a topic, the agent:
-1. Plans an outline (sections, order)
-2. Researches each section using simulated tools
-3. Writes each section
-4. Assembles the full document
-5. Runs a single Reflexion critique pass on the full draft
-6. Produces a final revised version
+**Expected result:**
+- Phase-by-phase console output:
+  ```
+  Phase 1: Planning outline...
+    1. Research AI in code generation
+    2. Research AI in testing and QA
+    3. Research AI in operations/DevOps
+    4. Write section: AI-Assisted Code Generation
+    5. Write section: AI in Testing
+    6. Write section: AI in Operations
+    7. Assemble and review
 
-Tools available: `research(query)`, `write_section(title, content)`, `critique_document(document)`.
+  Phase 2: Executing plan...
+  [step-by-step research and writing output]
 
-Test topic: *"The role of artificial intelligence in modern software engineering"* (3 sections, ~150 words each).
+  Phase 3: Critique...
+  Critique: The introduction lacks a clear thesis statement. Section 2 does not mention specific tools.
 
-Print each phase (plan, research results, drafts, critique, final) as it progresses.
+  Phase 4: Revision...
+  [revised document output]
 
-**Checkpoint:** The agent produces a document with at least 3 sections. The Reflexion critique identifies at least one concrete improvement. The final document differs from the initial draft.
+  Document complete — 3 sections, revised once.
+  ```
+- The agent produces a document with at least 3 sections
+- The critique identifies at least one concrete improvement (not generic praise)
+- The final document differs from the initial draft
+
+**Why this matters:**
+Production AI writing systems are never single-shot. They combine planning (outline), execution (research + drafting), and self-critique (Reflexion). This task demonstrates the composition pattern: Plan-and-Execute for structure, Reflexion for quality. Most commercial document-generation products use exactly this architecture.
 
 ### Task 5: Token Cost Comparison
 
-Run the same complex task through three patterns and record total token usage.
+**Goal:** Run the same task through three patterns and measure token cost, providing concrete data for pattern selection decisions.
 
-In `src/cost_comparison.py`:
+**What to do:**
+1. Create `lab/src/cost_comparison.py` (this file does not yet exist — build it using the tool loop, ReAct, and Reflexion patterns from prior tasks)
+2. Implement three agent functions that all answer the same question: *"Research and answer: What were the three main causes of World War I? For each cause, give one concrete example."*
+   - `run_plain_loop()`: plain tool loop (no reasoning instructions), returns `(answer, calls, input_tokens, output_tokens)`
+   - `run_react()`: ReAct with CoT system prompt, returns the same tuple
+   - `run_reflexion()`: generate answer, critique once, revise, returns the same tuple
+3. Use the same simulated `search` tool and knowledge base as `plan_execute.py`
+4. Print a `rich.Table` comparing all three approaches: input tokens, output tokens, total tokens, model calls, and a placeholder column for manual quality rating (1-5)
+5. Run:
+   ```bash
+   uv run python src/cost_comparison.py
+   ```
 
-Task: *"Research and answer: What were the three main causes of World War I? For each cause, give one concrete example."*
+**Expected result:**
+- A comparison table:
+  ```
+  ┌────────────────┬──────────────┬───────────────┬──────────────┬───────┬─────────┐
+  │ Pattern        │ Input Tokens │ Output Tokens │ Total Tokens │ Calls │ Quality │
+  ├────────────────┼──────────────┼───────────────┼──────────────┼───────┼─────────┤
+  │ Plain loop     │ 450          │ 180           │ 630          │ 2     │ ___/5   │
+  │ ReAct          │ 820          │ 350           │ 1170         │ 3     │ ___/5   │
+  │ Reflexion      │ 1100         │ 520           │ 1620         │ 3     │ ___/5   │
+  └────────────────┴──────────────┴───────────────┴──────────────┴───────┴─────────┘
+  ```
+- All three approaches produce an answer about WWI causes
+- You have concrete token numbers showing the cost multiplier of each pattern
+- Add a comment at the top of the file with your conclusion: is the quality improvement worth the token overhead?
 
-Run this task with:
-1. Plain tool loop (from Module 03 pattern)
-2. ReAct (from Module 06)
-3. Reflexion (1 critique pass)
-
-For each, record: total input tokens, total output tokens, number of model calls, answer quality (manual 1–5 rating).
-
-Print a rich table comparing all three. Add a comment with your conclusion: is the quality improvement worth the token overhead?
-
-**Checkpoint:** All three approaches produce an answer. You have concrete token numbers to compare.
+**Why this matters:**
+Pattern selection without cost data is guessing. This exercise produces the exact numbers you need for a production cost-benefit analysis. A pattern that improves accuracy by 10% but costs 3x more tokens may not be justified at scale. Always benchmark before committing to a complex pattern in production.
 
 ---
 

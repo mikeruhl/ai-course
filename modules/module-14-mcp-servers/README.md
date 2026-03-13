@@ -304,112 +304,156 @@ npm install -g @modelcontextprotocol/inspector
 
 ### Task 1: Build the Azure OpenAI MCP Server (5 tools)
 
-File: `lab/src/openai_server.py`
+**Goal:** Implement five MCP tools that wrap Azure OpenAI, making its capabilities discoverable and callable by any MCP client.
 
-Build an MCP server with these five tools:
+**What to do:**
+1. Open `lab/src/openai_server.py` — find the `# TASK 1: Tools` section (around line 53)
+2. Implement the five `@mcp.tool()` functions:
+   - `count_tokens` — already complete; uses `tiktoken.get_encoding("cl100k_base")` locally
+   - `chat_completion` — POST to `CHAT_URL` with messages, temperature, max_tokens via `httpx`; return `response["choices"][0]["message"]["content"]`
+   - `search_azure_openai` — thin wrapper that calls `chat_completion` with a concise system message
+   - `embed_text` — POST to `EMBED_URL` with `{"input": text}`; return `response["data"][0]["embedding"]`
+   - `list_models` — GET `MODELS_URL`; return `response["data"]`
+3. Run:
+   ```bash
+   npx @modelcontextprotocol/inspector uv run python src/openai_server.py
+   ```
 
-| Tool | Description |
-|---|---|
-| `chat_completion` | Send messages to Azure OpenAI, return the assistant reply |
-| `embed_text` | Embed a string, return the vector as a list of floats |
-| `count_tokens` | Count tokens in text using tiktoken (no API call) |
-| `list_models` | List available deployments from the Azure OpenAI account |
-| `search_azure_openai` | Query the Azure OpenAI API with a single user message (convenience wrapper) |
+**Expected result:**
+- MCP Inspector opens in the browser showing 5 tools in the "Tools" tab
+- Calling `count_tokens` with text `"hello world"` returns `2`
+- Calling `chat_completion` with `user_message="Say hello"` returns a greeting from the model
+- Calling `list_models` returns a JSON array of deployment objects like `[{"id": "gpt-4o-mini", "model": "gpt-4o-mini", ...}]`
 
-Test with MCP Inspector:
-```bash
-npx @modelcontextprotocol/inspector uv run python src/openai_server.py
-```
-
-The Inspector UI will appear. Verify each tool appears in the "Tools" tab and
-can be called successfully.
+**Why this matters:**
+- Wrapping Azure OpenAI as MCP tools decouples LLM access from client implementation. Any MCP-compliant client (Claude Desktop, VS Code, custom agents) can discover and call your tools without knowing the Azure SDK or endpoint details. This is the composability pattern MCP enables.
 
 ### Task 2: Add Resources (Knowledge Base)
 
-File: `lab/src/openai_server.py` (extend) or `lab/src/kb_resources.py`
+**Goal:** Expose a local knowledge base as MCP Resources, demonstrating the difference between read-only content (Resources) and callable actions (Tools).
 
-Add a `knowledge_base/` directory with three markdown files. Expose them as
-resources using the URI scheme `kb:///{filename}`.
+**What to do:**
+1. Create a `lab/knowledge_base/` directory with 2-3 markdown files (e.g., `intro.md`, `faq.md`, `architecture.md`)
+2. Open `lab/src/openai_server.py` — find the `# TASK 2: Resources` section (around line 167)
+3. Implement three functions:
+   - `kb_index()` — decorated with `@mcp.resource("kb:///index")`. List all `.md` and `.txt` files in `KB_PATH`, return filenames as a newline-separated string. Handle `KB_PATH` not existing.
+   - `kb_document(filename)` — decorated with `@mcp.resource("kb:///{filename}")`. Read `KB_PATH / filename`. Validate path with `resolve()` + `is_relative_to(KB_PATH)` to block traversal. Raise `mcp_types.McpError` on bad paths or missing files.
+   - `list_kb_documents()` — decorated with `@mcp.tool()`. Return a `list[str]` of filenames (duplicates `kb_index` but as a tool so the LLM can call it during tool-use mode).
+4. Run:
+   ```bash
+   npx @modelcontextprotocol/inspector uv run python src/openai_server.py
+   ```
 
-Implement:
-- A static resource `kb:///index` that lists all available documents
-- A dynamic resource `kb:///{filename}` that returns document content
-- A tool `list_kb_documents` that returns available filenames (so the LLM
-  can discover what to request as resources)
+**Expected result:**
+- The "Resources" tab in Inspector shows `kb:///index`
+- Reading `kb:///index` returns something like: `intro.md\nfaq.md\narchitecture.md`
+- Reading `kb:///intro.md` returns the file content
+- The `list_kb_documents` tool appears in the "Tools" tab and returns `["intro.md", "faq.md", "architecture.md"]`
 
-Verify in MCP Inspector: the "Resources" tab should show your documents.
+**Why this matters:**
+- Resources are how MCP servers expose contextual data the LLM can pull into its context window — documents, configs, data snapshots. Providing both a Resource and a Tool for discovery gives clients flexibility: some clients support resource listing, others only support tool calls. Path validation here is a preview of the security hardening in Module 16.
 
 ### Task 3: Add Prompts
 
-File: `lab/src/openai_server.py` (extend)
+**Goal:** Implement reusable prompt templates as MCP Prompts, enabling clients to request pre-structured message lists for common tasks.
 
-Add two prompts:
+**What to do:**
+1. Open `lab/src/openai_server.py` — find the `# TASK 3: Prompts` section (around line 222)
+2. Implement two `@mcp.prompt()` functions:
+   - `code_review(diff, language, focus_area="all")` — return a `list[Message]` with a single `Message(role="user", content=TextContent(...))` that includes the language, focus area, the diff in a code block, and a requested output format (summary, issues with severity, suggestions)
+   - `summarize(content, max_words=150)` — return a `list[Message]` instructing the LLM to summarize within the word limit, preserving key points and numbers
+3. Run:
+   ```bash
+   npx @modelcontextprotocol/inspector uv run python src/openai_server.py
+   ```
 
-**`code_review` prompt**: args: `diff` (str), `language` (str), `focus_area` (str, default "all")
-Returns a message list that sets up a structured code review.
+**Expected result:**
+- The "Prompts" tab in Inspector shows `code_review` and `summarize`
+- Calling `code_review` with `diff="- old\n+ new"`, `language="python"`, `focus_area="security"` returns a message list like:
+  ```json
+  [{"role": "user", "content": {"type": "text", "text": "Please review the following python code diff.\nFocus area: security\n\n```diff\n- old\n+ new\n```\n\nRespond with: (1) summary, (2) issues with severity, (3) suggestions."}}]
+  ```
+- Calling `summarize` with `content="Long text..."`, `max_words=50` returns a message mentioning the 50-word limit
 
-**`summarize` prompt**: args: `content` (str), `max_words` (int, default 150)
-Returns a message list instructing the LLM to summarise content concisely.
-
-Verify in MCP Inspector: both prompts appear in the "Prompts" tab and return
-correctly structured messages when called with arguments.
+**Why this matters:**
+- Prompts let teams standardize how they interact with LLMs — everyone uses the same code review format, the same summarization template. Version-controlling prompts alongside server code means prompt changes are reviewable, testable, and deployable like any other code change.
 
 ### Task 4: Build the Azure AI Search MCP Server
 
-File: `lab/src/search_server.py`
+**Goal:** Build a second MCP server that wraps Azure AI Search, demonstrating how MCP servers can expose any backend service as discoverable tools.
 
-Build a separate MCP server wrapping Azure AI Search with these tools:
+**What to do:**
+1. Open `lab/src/search_server.py` — find the `# TASK 4: Azure AI Search Tools` section (around line 74)
+2. Implement five `@mcp.tool()` functions using the helper clients `_get_search_client()` and `_get_index_client()`:
+   - `search(query, top=5, filter=None)` — call `client.search(search_text=query, top=top, filter=filter)`, iterate results into a list of dicts with id, title, content (truncated to 500 chars), and `@search.score`
+   - `index_document(doc_id, title, content, metadata=None)` — build a document dict, merge metadata if provided, call `client.upload_documents(documents=[doc])`
+   - `delete_document(document_id)` — call `client.delete_documents(documents=[{"id": document_id}])`
+   - `get_document(document_id)` — call `client.get_document(key=document_id)`, catch `ResourceNotFoundError` and raise `McpError`
+   - `list_indices()` — call `index_client.list_index_names()`, collect into a list of strings
+3. Add to `.env`:
+   ```
+   AZURE_SEARCH_ENDPOINT=https://<name>.search.windows.net
+   AZURE_SEARCH_KEY=<admin-key>
+   AZURE_SEARCH_INDEX=<index-name>
+   ```
+4. Run:
+   ```bash
+   npx @modelcontextprotocol/inspector uv run python src/search_server.py
+   ```
 
-| Tool | Args | Description |
-|---|---|---|
-| `search` | query, top (default 5), filter (optional) | Full-text + vector hybrid search |
-| `index_document` | id, title, content, metadata (dict) | Add or update a document in the index |
-| `delete_document` | document_id | Remove a document by ID |
-| `list_indices` | — | List all indices in the search service |
-| `get_document` | document_id | Retrieve a specific document by ID |
+**Expected result:**
+- Inspector shows 5 tools: `search`, `index_document`, `delete_document`, `get_document`, `list_indices`
+- Calling `list_indices` returns `["mcp-lab-index"]` (or your index name)
+- Calling `search` with `query="test"` returns a list like:
+  ```json
+  [{"id": "doc-001", "title": "Test Doc", "content": "...", "score": 0.82}]
+  ```
+- Calling `index_document` with a new doc and then `get_document` with the same ID retrieves it
 
-Add the Azure AI Search variables to `.env.example`:
-```
-AZURE_SEARCH_ENDPOINT=https://<name>.search.windows.net
-AZURE_SEARCH_KEY=<admin-key>
-AZURE_SEARCH_INDEX=<index-name>
-```
+**Why this matters:**
+- This pattern — wrapping a backend service as MCP tools — is how teams share infrastructure capabilities across agents. A search MCP server lets any agent search your knowledge base without importing the Azure SDK or managing credentials directly. The server becomes the capability boundary.
 
 ### Task 5: Write Integration Tests
 
-File: `lab/src/test_servers.py`
+**Goal:** Test MCP servers programmatically using the SDK's client interface, proving the server contract works end-to-end over stdio transport.
 
-Use the `mcp` Python SDK as a client (not just a server) to test your servers
-programmatically. The SDK provides a client interface:
+**What to do:**
+1. Open `lab/src/test_servers.py` — the file defines `connected_session()` (line 54), a context manager that spawns a server subprocess and returns an initialized `ClientSession`
+2. Implement the test functions across five groups:
+   - **5a** (`test_openai_server_has_required_tools`, line 67) — assert `expected_tools` is a subset of registered tool names from `session.list_tools()`
+   - **5a** (`test_openai_server_has_resources`, line 86) — assert `"kb:///index"` appears in `session.list_resources()` URIs
+   - **5a** (`test_openai_server_has_prompts`, line 97) — assert `{"code_review", "summarize"}` is a subset of registered prompt names
+   - **5b** (`test_count_tokens_basic`, line 111) — call `session.call_tool("count_tokens", {"text": "hello world"})`, assert `result.content[0].text == "2"`
+   - **5b** (`test_count_tokens_empty_string`, line 120) — same pattern, assert result is `"0"`
+   - **5c** (`test_kb_index_resource`, line 134) — call `session.read_resource("kb:///index")`, assert content is non-empty
+   - **5d** (`test_code_review_prompt`, line 148) — call `session.get_prompt("code_review", arguments={...})`, assert at least one message with role `"user"` containing `"python"`
+   - **5d** (`test_summarize_prompt`, line 167) — assert `"50"` appears in the prompt message text
+   - **5e** (`test_invalid_tool_arguments`, line 184) — call `count_tokens` with `{"text": 12345}`, assert an error response (check `result.isError`)
+   - **5f** (`test_chat_completion`, line 199) — marked `@pytest.mark.azure`, calls `chat_completion` and asserts a non-empty response
+   - **5f** (`test_search_server_tools`, line 211) — verifies all 5 search tools are registered
+3. Run:
+   ```bash
+   uv run pytest src/test_servers.py -v           # structural tests only
+   uv run pytest src/test_servers.py -v -m azure  # include Azure API tests
+   ```
 
-```python
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+**Expected result:**
+- Structural tests (5a-5e) pass without Azure credentials since they test registration and local tools:
+  ```
+  test_openai_server_has_required_tools PASSED
+  test_openai_server_has_resources PASSED
+  test_openai_server_has_prompts PASSED
+  test_count_tokens_basic PASSED
+  test_count_tokens_empty_string PASSED
+  test_kb_index_resource PASSED
+  test_code_review_prompt PASSED
+  test_summarize_prompt PASSED
+  test_invalid_tool_arguments PASSED
+  ```
+- Azure-marked tests pass when credentials are configured
 
-async def test_openai_server():
-    server_params = StdioServerParameters(
-        command="uv",
-        args=["run", "python", "src/openai_server.py"],
-        env=dict(os.environ)
-    )
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            # List tools
-            tools = await session.list_tools()
-            assert len(tools.tools) >= 5
-            # Call count_tokens
-            result = await session.call_tool("count_tokens", {"text": "hello world"})
-            assert result.content[0].text == "2"
-```
-
-Write tests for:
-- All 5 tools on the OpenAI server (at minimum: assert they return without error)
-- Resource listing and reading on the KB server
-- Prompt generation for both prompts
-- Error handling: call a tool with invalid args, assert the error response is correct
-
-Run: `uv run pytest src/test_servers.py -v`
+**Why this matters:**
+- The same MCP SDK that builds servers also tests them. This means your CI pipeline can verify MCP contract compliance (tool names, schemas, return types) without deploying. Structural tests catch regressions like renamed tools or changed argument schemas before they break downstream clients.
 
 ---
 

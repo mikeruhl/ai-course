@@ -247,77 +247,186 @@ uv run python src/autogen_lab.py
 
 ### Task 1: AssistantAgent + UserProxyAgent Basics
 
-Create an AssistantAgent and UserProxyAgent. Give the assistant a task that
-requires writing code:
-"Write a Python function that computes the Levenshtein distance between two
-strings. Include a test case. Then say TERMINATE."
+**Goal:** Observe AutoGen's write-execute-observe conversation loop, where the LLM generates code and the UserProxyAgent executes it.
 
-Let the UserProxy execute the generated code. Observe the conversation loop.
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-18-autogen\lab\src\autogen_lab.py` and locate `build_llm_config()` (line 42). Fill in the `config_list` entry using the environment variables `ENDPOINT`, `API_KEY`, `DEPLOYMENT`, and `API_VERSION` defined at the top of the file.
+2. In `task1_basic_code_loop()` (line 72), create an `AssistantAgent` named `"Coder"` with a system_message instructing it to write Python code to solve problems, test the code, and say `TERMINATE` when done. Pass `llm_config` to the agent.
+3. Create a `UserProxyAgent` named `"Executor"` with `human_input_mode="NEVER"`, `code_execution_config={"work_dir": "/tmp/autogen_task1", "use_docker": False}`, and `is_termination_msg=lambda msg: "TERMINATE" in msg.get("content", "")`.
+4. Call `user_proxy.initiate_chat(assistant, message=task)` with the Levenshtein distance task already defined in the function (lines 90-95).
+5. After the conversation, print the total turn count from `len(user_proxy.chat_messages[assistant])` and whether it ended with TERMINATE or hit max_round.
+6. Run:
+   ```bash
+   uv run python src/autogen_lab.py
+   ```
 
-Questions to answer:
-- How many turns did the conversation take?
-- Did the assistant correct itself after seeing the execution result?
-- What happens if the generated code has a bug? Does the agent self-correct?
+**Expected result:**
+```
+──────────── Task 1: AssistantAgent + UserProxyAgent ────────────
+Coder (to Executor):
+```python
+def levenshtein_distance(s1: str, s2: str) -> int:
+    ...
+```
+
+Executor (to Coder):
+exitcode: 0 (execution succeeded)
+ALL TESTS PASSED
+
+Coder (to Executor):
+TERMINATE
+
+Total turns: 3
+Ended with: TERMINATE
+```
+- The assistant writes the function with tests, the executor runs it, and the conversation ends on success.
+- If the code has a bug, the executor returns the traceback and the assistant self-corrects — adding 1-2 extra turns.
+
+**Why this matters:**
+This is AutoGen's core value proposition: the conversation loop automates the write/run/fix cycle. In production, this pattern powers data analysis agents that write SQL or Python, execute it, observe errors, and iterate — without human intervention. The risk is unbounded iteration; the `is_termination_msg` function is your primary guard against runaway loops.
 
 ### Task 2: GroupChat — Planner, Coder, Tester
 
-Build a 3-agent group chat:
-- **PlannerAgent**: breaks problems into subtasks, does not write code
-- **CoderAgent**: implements the plan, writes Python code
-- **TesterAgent**: reviews the code for correctness and says "APPROVED" when
-  satisfied or provides specific feedback
+**Goal:** Compare round-robin vs. LLM-based speaker selection in a multi-agent group chat.
 
-Task: "Build and test a Python module with two functions: `merge_sorted_lists`
-that merges two sorted lists into one sorted list, and `binary_search` that
-finds a target in a sorted list. Include docstrings and unit tests."
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-18-autogen\lab\src\autogen_lab.py` and locate `task2_group_chat()` (line 111).
+2. Create three `AssistantAgent` instances with `llm_config`: `Planner` (system_message: breaks problems into steps, does NOT write code), `Coder` (implements the plan in Python with docstrings), and `Tester` (reviews code for correctness, says `APPROVED` if acceptable or provides numbered feedback).
+3. Create a `UserProxyAgent` named `"Executor"` with `human_input_mode="NEVER"` and a termination condition that stops when the Tester says `APPROVED`.
+4. Import `GroupChat` and `GroupChatManager` from `autogen`. Create a `GroupChat` with `agents=[user_proxy, planner, coder, tester]`, `max_round=15`, and `speaker_selection_method="round_robin"`. Create a `GroupChatManager` backed by `llm_config`.
+5. Run with the `merge_sorted_lists` / `binary_search` task already defined in the function (lines 145-151). Record the speaker sequence and turn count.
+6. Switch to `speaker_selection_method="auto"` and run the same task again. Compare which approach produces better results and how many turns each took.
+7. Run:
+   ```bash
+   uv run python src/autogen_lab.py
+   ```
 
-Use `speaker_selection_method="round_robin"` first, then switch to `"auto"`.
-Compare the results — does automatic selection produce better outcomes?
+**Expected result:**
+```
+──────────── Task 2: GroupChat — Planner, Coder, Tester ────────────
+[Round Robin] Speaker order: Executor → Planner → Coder → Tester → Coder → Tester → ...
+[Round Robin] Total turns: 8, Tester approved: True
+
+[Auto] Speaker order: Executor → Planner → Coder → Tester → Coder → Tester → ...
+[Auto] Total turns: 6, Tester approved: True
+```
+- Round-robin forces every agent to speak in fixed order, even when a step is unnecessary (e.g., Planner re-planning after a minor code fix).
+- Auto selection skips agents that have nothing to contribute, typically finishing in fewer turns.
+
+**Why this matters:**
+LLM-based speaker selection costs one extra API call per turn but produces more natural conversation flow. At 15 turns with `"auto"`, that is 15 additional LLM calls just for routing. For high-volume production workloads, deterministic routing (Task 5) eliminates this cost while maintaining predictability.
 
 ### Task 3: Docker Executor Configuration
 
-Switch the code execution backend from local subprocess to Docker.
+**Goal:** Run LLM-generated code in a sandboxed Docker container with timeout enforcement, demonstrating the production safety pattern.
 
-Configure the Docker executor with:
-- A `python:3.11-slim` base image
-- 30-second execution timeout
-- A specific work directory
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-18-autogen\lab\src\autogen_lab.py` and locate `task3_docker_executor()` (line 164).
+2. Create the same `AssistantAgent` ("Coder") and `UserProxyAgent` ("Executor") pair as Task 1, but change `code_execution_config` to `{"executor": "docker", "docker_image": "python:3.11-slim", "work_dir": "/tmp/autogen_docker", "timeout": 30}`. Alternatively, use the newer `autogen.coding.DockerCommandLineCodeExecutor` API depending on your pyautogen version.
+3. Re-run the Levenshtein distance task through Docker. Verify that execution completes successfully.
+4. Test timeout handling: give the agent a task that involves code with an infinite loop (e.g., `"Write Python code that runs 'while True: pass' for 60 seconds."`). The Docker executor should kill it after 30 seconds. Observe how the agent responds to the timeout error—does it self-correct?
+5. If the executor exposes the Docker container ID, print it to confirm code ran in Docker, not on the host.
+6. Run:
+   ```bash
+   uv run python src/autogen_lab.py
+   ```
 
-Re-run Task 1's conversation through Docker. Verify that:
-- Code executes inside the container (not on the host)
-- Timeout fires correctly for infinite loops (test with `while True: pass`)
-- The conversation recovers gracefully when execution times out
+**Expected result:**
+```
+──────────── Task 3: Docker Executor ────────────
+Coder (to Executor):
+```python
+def levenshtein_distance(s1, s2): ...
+```
+
+Executor (to Coder):
+exitcode: 0 (execution succeeded)
+ALL TESTS PASSED
+
+--- Timeout test ---
+Executor (to Coder):
+exitcode: 1 (execution failed)
+Timeout: code execution exceeded 30 seconds.
+
+Coder (to Executor):
+The code timed out due to an infinite loop. Here is a corrected version...
+```
+- Code runs inside the Docker container, not on the host machine.
+- The 30-second timeout kills the infinite loop. The agent sees the timeout error and attempts to self-correct.
+
+**Why this matters:**
+An LLM generating arbitrary Python that runs on your host is a security liability. Docker isolation limits the blast radius: no host filesystem access, no network access (if configured), and hard timeout enforcement. In production, combine Docker with CPU/memory limits and a package allowlist to further constrain the execution environment.
 
 ### Task 4: Research Pipeline with Tool-Calling Agents
 
-Build a pipeline where agents use simulated tool calls (not code execution)
-to research a topic and produce a report.
+**Goal:** Build a multi-agent pipeline that uses simulated tool calls (not code execution) to research a topic and produce a structured report.
 
-Define two tools:
-- `web_search(query: str) -> str` — returns a stub result with fake "articles"
-- `fetch_article(url: str) -> str` — returns stub article content
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-18-autogen\lab\src\autogen_lab.py` and locate `task4_research_pipeline()` (line 197). The `web_search` (line 203) and `fetch_article` (line 226) stub functions are already defined.
+2. Register `web_search` and `fetch_article` as AutoGen tools. Use the `@assistant.register_for_llm` and `@user_proxy.register_for_execution` decorators, or the `FunctionCallingAgent` API depending on your installed pyautogen version. Check the AutoGen docs for your version.
+3. Create a `ResearchAgent` (AssistantAgent) with instructions to: (1) use `web_search` to find information about the topic, (2) use `fetch_article` to get details from 2 articles, (3) synthesize findings and say TERMINATE when done.
+4. Create a `WriterAgent` (AssistantAgent) that takes the ResearchAgent's findings and produces a structured report with: Executive Summary (2 sentences), Key Findings (3 bullet points), and Sources (URLs cited).
+5. Run the pipeline with the topic `"Azure Container Apps architecture"`.
+6. Run:
+   ```bash
+   uv run python src/autogen_lab.py
+   ```
 
-Create a ResearchAgent that uses these tools to gather information and a
-WriterAgent that synthesizes the results into a structured report.
+**Expected result:**
+```
+──────────── Task 4: Research Pipeline with Tools ────────────
+ResearchAgent (to Executor):
+[Tool call] web_search(query="Azure Container Apps architecture")
+[Tool result] Azure Container Apps is a serverless container platform...
 
-The report must have: Executive Summary, Key Findings (3 bullets), Sources.
+[Tool call] fetch_article(url="aca.example.com")
+[Tool result] Content of aca.example.com: This is a detailed technical article...
+
+WriterAgent:
+Executive Summary: Azure Container Apps is a serverless platform for running
+containerized workloads. It provides managed scaling and Azure service integration.
+
+Key Findings:
+- Serverless container hosting with automatic scaling
+- Integrates with Azure services via managed control plane
+- Supports event-driven architectures
+
+Sources: aca.example.com, scale.example.com
+```
+- The ResearchAgent calls tools to gather data; the WriterAgent synthesizes it into the required format.
+- Tool calls appear in the conversation history as structured function calls, not code blocks.
+
+**Why this matters:**
+This pattern separates research (tool-calling) from synthesis (writing). In production, the `web_search` stub would be replaced with Bing Search API or Azure AI Search. The structured report format ensures consistent output shape, which matters when downstream systems parse the agent's output programmatically.
 
 ### Task 5: Custom GroupChatManager Speaker Selection
 
-Replace AutoGen's LLM-based speaker selection with a deterministic router.
+**Goal:** Replace LLM-based speaker selection with a deterministic routing function and verify reproducible agent ordering.
 
-Rules:
-- After UserProxy: always go to Planner
-- After Planner: always go to Coder
-- After Coder: always go to Tester
-- After Tester: if APPROVED, end; otherwise go to Coder
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-18-autogen\lab\src\autogen_lab.py` and locate `task5_custom_speaker_selection()` (line 262).
+2. Implement `custom_speaker_selector(last_speaker, groupchat)` (line 273) with these routing rules: UserProxy → Planner, Planner → Coder, Coder → Tester, Tester → Coder (if not `APPROVED`) or END. Use `last_speaker.name` to identify the current speaker and `groupchat.messages[-1]["content"]` to check for `APPROVED`. Use a helper like `agent_by_name(name)` to look up agents from `groupchat.agents`.
+3. Create Planner, Coder, and Tester agents (same as Task 2).
+4. Create a `GroupChat` with `speaker_selection_method=custom_speaker_selector` and a `GroupChatManager` backed by `llm_config`.
+5. Run the same task as Task 2 **twice** with identical input. Print the full sequence of speakers for each run and verify they are identical (deterministic).
+6. Add a comment reflecting: in what scenarios does deterministic routing break down? (Hint: think about what happens when Tester gives feedback but there is no Planner re-plan step in the routing.)
+7. Run:
+   ```bash
+   uv run python src/autogen_lab.py
+   ```
 
-Implement this as a custom `speaker_selection_method` function. Verify that
-the routing is deterministic — run the same task twice and confirm the agent
-order is identical both times.
+**Expected result:**
+```
+──────────── Task 5: Custom Deterministic Speaker Selection ────────────
+Run 1 speaker order: Executor → Planner → Coder → Tester → Coder → Tester(APPROVED)
+Run 2 speaker order: Executor → Planner → Coder → Tester → Coder → Tester(APPROVED)
+Deterministic: True (sequences match)
+```
+- The agent order is identical across both runs — no randomness from an LLM-based selector.
+- No extra LLM calls for speaker selection (saves cost at scale).
 
-Reflect: when does deterministic routing outperform LLM-based selection?
-When does it fail?
+**Why this matters:**
+Deterministic routing makes agent behavior reproducible and testable. It eliminates the per-turn LLM call cost of `"auto"` selection. The failure mode: when the Tester gives feedback that requires re-planning (not just re-coding), the fixed Tester → Coder route skips the Planner. Deterministic routing works when the task structure is predictable; it breaks when agents need to dynamically adapt the workflow.
 
 ---
 

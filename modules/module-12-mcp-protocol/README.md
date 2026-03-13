@@ -302,97 +302,157 @@ the tools. The `.env` is included for consistency but not required for Labs A-D.
 
 ---
 
-### Lab 12A: MCP Server with Three Tools
+### Lab 12A: MCP Client Implementation
 
-**Goal:** Build a working MCP server exposing filesystem tools.
+**Goal:** Build a raw MCP client over HTTP that speaks JSON-RPC 2.0 to an MCP server — no SDK magic, so you understand the wire protocol.
 
-**Tasks:**
+**What to do:**
 
-1. Implement an MCP server with three tools using the Python `mcp` SDK:
-   - `read_file(path: str) -> str` — read a file, cap at 10,000 characters
-   - `list_directory(path: str) -> list[dict]` — list files with name, type,
-     size. Return as JSON-serialized list.
-   - `search_files(directory: str, pattern: str) -> list[str]` — find files
-     matching a glob pattern, return list of paths
-
-2. Add input validation to each tool:
-   - `read_file`: reject paths outside a safe root directory (configurable via env var `MCP_ROOT_DIR`)
-   - `list_directory`: same root restriction
-   - `search_files`: limit results to 100 files maximum
-
-3. Add proper error handling: return `types.TextContent` with an error
-   description rather than raising Python exceptions (MCP clients may not
-   handle exceptions gracefully).
-
-4. Test the server using the MCP Inspector:
+1. Open `lab/src/mcp_client.py`. Find the `MCPClient.initialize()` method.
+   Implement the MCP initialize handshake: POST a JSON-RPC request with method
+   `initialize`, then send a `notifications/initialized` notification.
    ```bash
-   npx @modelcontextprotocol/inspector uv run mcp_server.py
+   uv run python src/mcp_client.py --server http://localhost:3000/mcp --list-tools
    ```
-   Verify all three tools appear, have correct schemas, and work correctly.
 
-5. Write a second test script (`test_mcp_client.py`) that connects to your
-   server programmatically using the MCP Python SDK client and calls each tool.
+2. Implement `MCPClient.list_tools()` — POST `tools/list` and extract the
+   `result["tools"]` array.
 
-**File:** `lab/src/mcp_server.py`
+3. Implement `MCPClient.call_tool(tool_name, arguments)` — POST `tools/call`
+   with `{"name": tool_name, "arguments": arguments}` and concatenate
+   the text content blocks from the response.
+
+4. Implement `MCPClient.list_resources()` and `MCPClient.read_resource(uri)` —
+   POST `resources/list` and `resources/read` respectively.
+
+5. Implement `run_agent_with_mcp(query, client)` — an agentic loop that
+   converts MCP tools to OpenAI function-calling format (using
+   `mcp_tool_to_openai_schema()`), sends them to Azure OpenAI, and
+   dispatches tool calls back through the MCP client.
+   ```bash
+   uv run python src/mcp_client.py --query "Read the README for module 10"
+   ```
+
+**Expected result:**
+- `--list-tools` prints a rich table of tools with name and description columns
+- `--query` runs the agent loop; you see tool calls dispatched (e.g., `read_file`) followed by a final text response in a green-bordered panel
+- Sample output:
+  ```
+  ── MCP Client ──
+  Server: http://localhost:3000/mcp
+  Initializing...
+  Server capabilities: {"tools": {}, "resources": {}}
+  Available Tools:
+  ┌──────────────┬────────────────────────────────┐
+  │ Name         │ Description                    │
+  ├──────────────┼────────────────────────────────┤
+  │ read_file    │ Read file contents             │
+  │ list_dir     │ List directory entries          │
+  │ search_files │ Search for files by pattern    │
+  └──────────────┴────────────────────────────────┘
+  ```
+
+**Why this matters:**
+MCP abstracts the protocol behind SDKs. Building the raw HTTP + JSON-RPC layer first means you can debug protocol issues, write custom transports, and understand exactly what the SDK does for you — critical when MCP servers misbehave in production.
+
+**File:** `lab/src/mcp_client.py`
 
 ---
 
-### Lab 12B: Resource Exposure
+### Lab 12B: MCP Protocol Explorer
 
-**Goal:** Expose the course directory as a browseable resource tree.
+**Goal:** Use the MCP client from Lab 12A to build an interactive protocol explorer that inspects a live server's tools, resources, and schemas.
 
-**Tasks:**
+**What to do:**
 
-1. Add a resource that lists all modules:
-   - URI: `course://modules`
-   - Returns: JSON list of `{id, name, path}` for each module directory
+1. Open `lab/src/mcp_explore.py`. This script imports `MCPClient` from
+   `mcp_client.py`, so Lab 12A tasks 1-4 must be complete first.
 
-2. Add a resource for individual module READMEs:
-   - URI template: `course://modules/{module_id}/readme`
-   - Returns: the raw README.md content for that module
+2. Run the explorer against a running MCP server:
+   ```bash
+   uv run python src/mcp_explore.py --server http://localhost:3000/mcp
+   ```
+   The script auto-discovers tools (via `display_tools()`) and resources
+   (via `display_resources()`), printing rich tables with schemas.
 
-3. Add a resource for lab files:
-   - URI template: `course://modules/{module_id}/lab/{filename}`
-   - Returns: the content of a specific lab file
+3. Review `display_tools()` and `display_resources()` — these render the
+   tool input schemas and resource metadata. Confirm the output matches
+   the server's registered capabilities.
 
-4. Implement `list_resources()` and `list_resource_templates()` handlers so
-   clients can discover all available resources without knowing the URI scheme.
+4. Launch interactive mode to call tools manually:
+   ```bash
+   uv run python src/mcp_explore.py --server http://localhost:3000/mcp -i
+   ```
+   The `interactive_tool_call()` function prompts you for a tool name and
+   JSON arguments, then calls `client.call_tool()` and displays the result.
 
-5. Test with the MCP Inspector: browse the resource tree, open individual
-   module READMEs, confirm the content is correct.
+**Expected result:**
+- The explorer prints a three-column table: Name, Description, Input Schema (formatted JSON)
+- Resources table shows URI, Name, Description, MIME Type
+- The first resource's content is automatically fetched and displayed (truncated to 500 chars)
+- Interactive mode example:
+  ```
+  Available tools: read_file, list_dir, search_files
+  Tool name (or 'quit'): read_file
+  {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}
+  Arguments (JSON): {"path": "README.md"}
+  Calling read_file...
+  ╭─ Result ──────────────────────────────╮
+  │ # Module 12: MCP Protocol ...        │
+  ╰──────────────────────────────────────╯
+  ```
 
-**File:** Extend `lab/src/mcp_server.py`
+**Why this matters:**
+In production, you frequently need to inspect what an MCP server actually exposes versus what its documentation claims. An explorer tool is the MCP equivalent of Swagger UI — essential for debugging integration issues and verifying schema contracts.
+
+**File:** `lab/src/mcp_explore.py`
 
 ---
 
 ### Lab 12C: Prompt Templates
 
-**Goal:** Add reusable prompt templates to the MCP server.
+**Goal:** Add reusable prompt templates to your MCP server so prompt engineering is centralized and discoverable.
 
-**Tasks:**
+**What to do:**
 
-1. Add a `code_review` prompt template:
-   - Parameter: `diff: str` (required) — the code diff to review
-   - Parameter: `language: str` (optional, default "python") — programming language
-   - Parameter: `focus: str` (optional) — specific aspect to focus on
-   - Returns a well-structured user message that instructs the model to do
-     a thorough code review
+1. Open `lab/src/mcp_server.py` (you extend the server from earlier labs).
+   Add a `code_review` prompt template with parameters:
+   - `diff: str` (required) — the code diff to review
+   - `language: str` (optional, default "python")
+   - `focus: str` (optional) — specific aspect to focus on
 
 2. Add a `summarize_module` prompt template:
-   - Parameter: `module_id: str` (required)
-   - Uses the `read_file` tool internally to fetch the README, then wraps it
-     in a summarization prompt
-   - Returns a user message asking for a concise module summary
+   - `module_id: str` (required)
+   - Internally reads the module's README using the `read_file` tool, then
+     wraps the content in a summarization prompt.
 
 3. Add a `generate_quiz` prompt template:
-   - Parameter: `topic: str` (required)
-   - Parameter: `num_questions: int` (optional, default 5)
-   - Returns a prompt that asks the model to generate a quiz on the topic
+   - `topic: str` (required), `num_questions: int` (optional, default 5)
 
-4. Test all prompts with the MCP Inspector.
+4. Test all prompts with the MCP Inspector:
+   ```bash
+   npx @modelcontextprotocol/inspector uv run mcp_server.py
+   ```
 
-5. Demonstrate using a prompt from a client: write a script that fetches
-   the `code_review` prompt template and uses it to review a small code diff.
+5. Write a client script that fetches the `code_review` prompt template
+   and uses it to review a small code diff end-to-end.
+
+**Expected result:**
+- In the MCP Inspector, the Prompts tab shows three entries: `code_review`, `summarize_module`, `generate_quiz`
+- Selecting `code_review` shows its parameter schema with `diff` marked required
+- Filling in parameters and requesting the prompt returns a structured message array ready to send to an LLM
+- Inspector output example:
+  ```json
+  [
+    {
+      "role": "user",
+      "content": "Review this python code diff and identify issues:\n\nDiff:\n- x = input()\n+ x = int(input())\n\nFocus on: bugs, security vulnerabilities, performance issues, and code clarity."
+    }
+  ]
+  ```
+
+**Why this matters:**
+Prompt templates as MCP primitives mean your organization's prompt engineering lives in a discoverable, versioned server — not scattered across application code. Any MCP client (Claude Desktop, VS Code, custom apps) gets the same reviewed prompts without copy-paste drift.
 
 **File:** Extend `lab/src/mcp_server.py`
 
@@ -400,9 +460,9 @@ the tools. The `.env` is included for consistency but not required for Labs A-D.
 
 ### Lab 12D: MCP Inspector Testing and Debugging
 
-**Goal:** Master the MCP Inspector workflow for testing and debugging.
+**Goal:** Master the MCP Inspector workflow for testing and debugging MCP servers via raw JSON-RPC inspection.
 
-**Tasks:**
+**What to do:**
 
 1. Run the MCP Inspector against your server:
    ```bash
@@ -427,18 +487,32 @@ the tools. The `.env` is included for consistency but not required for Labs A-D.
 5. Add structured logging to your server (log to stderr, not stdout — stdout
    is the MCP transport channel). Observe the logs while using the Inspector.
 
+**Expected result:**
+- The Inspector UI lists all tools with their JSON Schema input definitions
+- Calling `read_file` with a valid path returns file contents; calling it with a path outside `MCP_ROOT_DIR` returns an error message (not a Python traceback)
+- The raw JSON-RPC tab shows the request/response pairs:
+  ```json
+  → {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"/etc/passwd"}}}
+  ← {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"Error: path is outside allowed root directory"}]}}
+  ```
+- After introducing a bug, the Inspector shows a JSON-RPC error response with code and message fields
+- stderr logs appear in the terminal (not in the Inspector transport)
+
+**Why this matters:**
+The MCP Inspector is your primary debugging tool for MCP development. When a client reports that a tool "doesn't work," the Inspector shows the exact JSON-RPC exchange — signature mismatches, missing fields, and unhandled exceptions are immediately visible.
+
 **No new file** — this lab uses the server from Labs 12A-12C.
 
 ---
 
 ### Lab 12E: Claude Desktop Integration
 
-**Goal:** Connect your MCP server to Claude Desktop and test end-to-end.
+**Goal:** Connect your MCP server to Claude Desktop and verify end-to-end tool invocation by a live LLM.
 
-Note: this lab requires Claude Desktop to be installed. If unavailable, build
-a Python MCP client instead (see alternate instructions below).
+Note: this lab requires Claude Desktop to be installed. If unavailable, use
+the Python MCP client from Lab 12A as the alternate path.
 
-**Tasks (Claude Desktop):**
+**What to do:**
 
 1. Add your MCP server to Claude Desktop's config file:
    ```json
@@ -470,15 +544,25 @@ a Python MCP client instead (see alternate instructions below).
 
 **Alternate (Python MCP Client):**
 
-If Claude Desktop is unavailable, build a Python MCP client that connects to
-your server and drives a multi-tool conversation:
-
+If Claude Desktop is unavailable, use the client from Lab 12A:
 ```bash
-uv run test_mcp_client.py "Find all Python files in the ai-course repo that import httpx"
+uv run python src/mcp_client.py --query "Find all Python files in the ai-course repo that import httpx"
 ```
 
-The client should run an agent loop that calls your MCP tools until it can
-answer the query.
+**Expected result:**
+- Claude Desktop shows a hammer icon with a badge count matching your tool count (3)
+- Asking "List all the modules" triggers a `list_directory` or `search_files` tool call — you see the tool invocation notification in the chat
+- Claude returns a formatted list of modules with descriptions pulled from your filesystem
+- Asking to read a file outside `MCP_ROOT_DIR` results in Claude reporting the error message from your tool, not a crash
+- Sample Claude Desktop interaction:
+  ```
+  User: Read the README for module 10 and summarize the key concepts
+  [Claude calls read_file with path "modules/module-10-.../README.md"]
+  Claude: Module 10 covers multi-agent orchestration patterns including...
+  ```
+
+**Why this matters:**
+Claude Desktop integration is the most common MCP deployment path. Validating that your server works with a real LLM client — not just the Inspector — catches issues like ambiguous tool descriptions that cause the model to pick the wrong tool, or missing schema constraints that lead to invalid arguments.
 
 **File:** `lab/src/test_mcp_client.py` (alternate path)
 

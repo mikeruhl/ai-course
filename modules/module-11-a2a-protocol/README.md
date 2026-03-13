@@ -271,170 +271,231 @@ Use separate terminal windows or run the server in the background.
 
 ### Lab 11A: Minimal A2A Server
 
-**Goal:** Implement a working A2A server in FastAPI that satisfies the core protocol.
+**Goal:** Implement a working A2A-compliant agent server using raw `http.server` so you see every protocol detail.
 
-**Tasks:**
+**What to do:**
 
-1. Implement `GET /.well-known/agent.json` that returns a valid Agent Card.
-   The agent should be a "technical summarizer" that summarizes technical
-   documents.
+1. Open `lab/src/a2a_server.py`. Study the `AGENT_CARD` dict at the top — it
+   defines the agent's identity, capabilities, and skills as served at
+   `/.well-known/agent.json`.
 
-2. Implement `POST /tasks/send` that:
-   - Accepts a Task object (with `id` and at least one `messages` entry)
-   - Extracts the text from the first user message
-   - Calls your Azure OpenAI deployment to process the task
-   - Returns a completed Task with the response as an agent message and
-     as an artifact named "summary"
+2. Study `A2ARequestHandler.handle_send()` — it parses the A2A message schema
+   (`id`, `message.parts[].text`), calls `run_research_agent()` via Azure
+   OpenAI, and returns a completed `Task` dataclass.
 
-3. Add proper error responses:
-   - 400 if the task is malformed
-   - 422 if no user message is present
-   - 500 with `{"status": "failed", "error": {...}}` if the LLM call fails
+3. Find `handle_send_subscribe()` (TODO at Task 3). Implement SSE streaming:
+   send response headers with `Content-Type: text/event-stream`, then emit
+   `data: <json>\n\n` events for each status transition (submitted, working,
+   completed/failed), flushing after each event.
 
-4. Add request logging middleware that logs: task id, message length,
-   processing time (ms), status.
+4. Run the server:
+   ```bash
+   cd modules/module-11-a2a-protocol/lab
+   uv run python src/a2a_server.py
+   ```
 
-Test manually with httpx in a Python script before building the client in Lab 11B.
+5. Test manually in another terminal:
+   ```bash
+   curl http://localhost:8080/.well-known/agent.json
+   curl -X POST http://localhost:8080/tasks/send \
+     -H "Content-Type: application/json" \
+     -d '{"id":"test-1","message":{"role":"user","parts":[{"type":"text","text":"What is RAG?"}]}}'
+   ```
 
-**File:** `lab/src/a2a_server.py`
+**Expected result:**
+- The server starts and prints:
+  ```
+  A2A Agent Server running on port 8080
+    Agent Card: http://localhost:8080/.well-known/agent.json
+    Send task:  POST http://localhost:8080/tasks/send
+    Streaming:  POST http://localhost:8080/tasks/sendSubscribe
+  ```
+- The Agent Card curl returns JSON with `name: "researcher-agent"`, `capabilities.streaming: true`, and one skill `"research"`.
+- The task POST returns a JSON object with `status: "completed"`, the original `input`, and an `output` field containing the LLM's answer about RAG.
+- Server console shows: `Task test-1… submitted: What is RAG?` then `Task test-1… completed`.
 
-Run with: `uvicorn a2a_server:app --port 8001 --reload`
+**Why this matters:**
+Building an A2A server from `http.server` (no FastAPI, no SDK) forces you to understand exactly what the protocol requires: the well-known discovery endpoint, the message/parts schema, and the task state machine. Every A2A SDK hides these details — knowing them means you can debug interoperability issues between agents built by different teams or in different languages.
 
 ---
 
 ### Lab 11B: A2A Client
 
-**Goal:** Build a client that uses the A2A protocol to call the server from Lab 11A.
+**Goal:** Build a client that discovers an agent via its card and submits tasks using the A2A protocol.
 
-**Tasks:**
+**What to do:**
 
-1. Implement `fetch_agent_card(base_url: str) -> dict` — fetches and validates
-   the Agent Card from `{base_url}/.well-known/agent.json`.
+1. Open `lab/src/a2a_client.py`. Study `discover_agent()` — it fetches the
+   Agent Card from `/.well-known/agent.json` and returns the parsed dict.
 
-2. Implement `send_task(agent_url: str, user_message: str, task_id: str | None = None) -> dict` that:
-   - Generates a UUID task id if not provided
-   - POSTs to `/tasks/send` with the correct A2A task structure
-   - Returns the completed Task dict
+2. Study `submit_task()` — it constructs the A2A message payload with
+   `id`, `message.role`, and `message.parts[]`, POSTs to `/tasks/send`,
+   and returns the completed task dict.
 
-3. Implement `extract_artifact(task: dict, artifact_name: str) -> Any` — finds
-   and returns a specific artifact from a completed task.
+3. Find `submit_task_streaming()` (TODO at Task 3). Implement it: open a
+   streaming POST to `/tasks/sendSubscribe`, iterate response lines, parse
+   `data: <json>` lines, and print each status update.
 
-4. Build a demo script that:
-   - Fetches the Agent Card from your Lab 11A server
-   - Prints the agent's capabilities
-   - Sends a task: "Summarize the key points of eventual consistency in
-     distributed systems"
-   - Prints the artifact contents
+4. Start the server from Lab 11A in one terminal, then run the client:
+   ```bash
+   # Terminal 1:
+   cd modules/module-11-a2a-protocol/lab
+   uv run python src/a2a_server.py
 
-5. Add retry logic with exponential backoff (max 3 retries) for transient
-   failures (5xx responses, timeouts).
+   # Terminal 2:
+   cd modules/module-11-a2a-protocol/lab
+   uv run python src/a2a_client.py --server http://localhost:8080 --query "What is eventual consistency?"
+   ```
 
-**File:** `lab/src/a2a_client.py`
+**Expected result:**
+- Step 1 (Agent Discovery) prints a table:
+  ```
+  Agent: researcher-agent
+  Description     Answers research questions by searching a knowledge base...
+  Version         1.0.0
+  URL             http://localhost:8080
+  Streaming       True
+  Skills          [research] Research Question: Research and answer a question...
+  ```
+- Step 2 (Task Submission) prints the task ID, status `completed`, and a
+  Result panel containing the LLM's explanation of eventual consistency.
+- If the server is not running, the client prints: `Could not connect to http://localhost:8080` with a hint to start the server.
+
+**Why this matters:**
+The client demonstrates A2A's value proposition: discover capabilities at runtime, submit work using a standardized schema, and handle results uniformly regardless of what the agent does internally. This is the same pattern that lets you swap agent implementations (Python to C#, OpenAI to Anthropic) without changing client code.
 
 ---
 
 ### Lab 11C: Streaming with SSE
 
-**Goal:** Add streaming to the A2A server and consume it from the client.
+**Goal:** Add SSE streaming to the A2A server and consume it from the client for real-time output.
 
-**Tasks:**
+**What to do:**
 
-1. Add `POST /tasks/sendSubscribe` to the server:
-   - Accepts the same Task input as `/tasks/send`
-   - Returns a `StreamingResponse` with `media_type="text/event-stream"`
-   - Emits SSE events in this sequence:
-     1. `task_status_update` with `status: "working"`
-     2. For each LLM response chunk: `task_artifact_update` with the partial text
-     3. `task_status_update` with `status: "completed", final: true`
+1. Open `lab/src/a2a_server.py`. Find `handle_send_subscribe()` (the TODO at
+   Task 3). Implement it:
+   - Send response headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`
+   - Emit `data: <json>\n\n` for each status transition: submitted, working, completed/failed
+   - Call `self.wfile.flush()` after each event
+   - Close the connection when done
 
-2. Azure OpenAI streaming: use `"stream": true` in the chat completions request.
-   Consume the SSE stream from Azure OpenAI and forward chunks to your client.
+2. Open `lab/src/a2a_client.py`. Find `submit_task_streaming()` (the TODO at
+   Task 3). Implement the SSE consumer: open a streaming POST with
+   `stream=True`, iterate response lines, parse `data:` lines as JSON, and
+   print each status update.
 
-3. Update the client to handle streaming:
-   - `send_task_streaming(agent_url, user_message)` — calls `/tasks/sendSubscribe`
-   - Yields events as they arrive
-   - Assembles the final artifact from all `task_artifact_update` events
+3. Start the server and run the client with `--stream`:
+   ```bash
+   # Terminal 1:
+   cd modules/module-11-a2a-protocol/lab
+   uv run python src/a2a_server.py
 
-4. Build a demo that streams a summarization task and prints each chunk as it
-   arrives (like a ChatGPT-style streaming UI in the terminal using rich).
+   # Terminal 2:
+   cd modules/module-11-a2a-protocol/lab
+   uv run python src/a2a_client.py --server http://localhost:8080 --query "Explain the CAP theorem" --stream
+   ```
 
-5. Measure and compare latency: time-to-first-token for streaming vs.
-   total-time for non-streaming on the same task.
+**Expected result:**
+- The client prints status updates as they arrive in real time:
+  ```
+  Streaming mode (Task 3)
+  Status: submitted
+  Status: working
+  Output: The CAP theorem, also known as Brewer's theorem...
+  Status: completed
+  ```
+- Time-to-first-token is noticeably faster than the synchronous `/tasks/send` path because the server begins emitting events as soon as the LLM starts generating.
 
-**File:** `lab/src/a2a_streaming.py` (extends `a2a_server.py`)
+**Why this matters:**
+SSE streaming is how production agent systems deliver progressive output — the same mechanism behind ChatGPT's typing effect. For long-running agent tasks (30+ seconds), streaming prevents HTTP timeouts and gives users visible progress. A2A standardizes the event names (`task_status_update`, `task_artifact_update`) so any compliant client can consume any compliant server's stream.
 
 ---
 
 ### Lab 11D: Two-Agent Delegation System
 
-**Goal:** Build a planner agent that delegates research subtasks to a researcher agent via A2A.
+**Goal:** Build a planner agent that delegates research subtasks to a researcher agent over the network via A2A.
 
-System architecture:
-```
-User ──► Planner Agent (port 8001) ──► Researcher Agent (port 8002)
-         - receives complex tasks       - handles research queries
-         - breaks them into steps       - returns structured findings
-         - assembles final answer
-```
+**What to do:**
 
-**Tasks:**
+1. This lab requires creating two new server files. The researcher agent
+   (port 8002) serves an Agent Card with skill `"research"` and processes
+   research queries via Azure OpenAI, returning artifacts with `findings`,
+   `confidence`, and `sources_consulted`.
 
-1. Implement the Researcher Agent (port 8002):
-   - Agent Card skill: "research" with input text, output data artifact
-   - Accepts research queries, uses the LLM to synthesize a detailed response
-   - Returns an artifact with `{"findings": str, "confidence": float, "sources_consulted": list}`
+2. The planner agent (port 8001) receives a complex task, uses the LLM to
+   decompose it into 2-3 research questions, calls the researcher via
+   `submit_task()` from `lab/src/a2a_client.py` for each question, and
+   assembles the results.
 
-2. Implement the Planner Agent (port 8001):
-   - Receives a complex user task
-   - Uses LLM to break it into 2-3 research questions
-   - Calls the Researcher Agent via A2A for each question (use the client
-     from Lab 11B)
-   - Assembles the researcher's artifacts into a final synthesized response
-   - Returns the final response as its own artifact
+3. Add bearer token authentication: the planner includes an `Authorization`
+   header, and the researcher validates it before processing.
 
-3. Add agent-to-agent authentication: include a shared secret in the
-   `Authorization` header (Bearer token, hardcoded for now — real auth is
-   Module 13). The Researcher Agent validates the token before processing.
+4. Run both servers and test:
+   ```bash
+   # Terminal 1 (researcher):
+   cd modules/module-11-a2a-protocol/lab
+   A2A_SERVER_PORT=8002 uv run python src/researcher_agent.py
 
-4. Test with: "What are the trade-offs between PostgreSQL and MongoDB for
-   a high-volume time-series workload, and which should we choose for a
-   system ingesting 100k events/minute?"
+   # Terminal 2 (planner):
+   cd modules/module-11-a2a-protocol/lab
+   A2A_SERVER_PORT=8001 uv run python src/planner_agent.py
 
-**Files:** `lab/src/planner_agent.py`, `lab/src/researcher_agent.py`
+   # Terminal 3 (client):
+   curl -X POST http://localhost:8001/tasks/send \
+     -H "Content-Type: application/json" \
+     -d '{"id":"test-1","message":{"role":"user","parts":[{"type":"text","text":"What are the trade-offs between PostgreSQL and MongoDB for a high-volume time-series workload?"}]}}'
+   ```
+
+**Expected result:**
+- The planner decomposes the query into 2-3 sub-questions (visible in its server logs).
+- The planner's logs show outbound A2A calls to `http://localhost:8002/tasks/send`.
+- The researcher's logs show incoming tasks and completions.
+- The final response assembles all research findings into a synthesized answer covering write throughput, query patterns, storage efficiency, and operational complexity.
+
+**Why this matters:**
+This is the canonical A2A use case: agents as independent services calling each other over HTTP. In production, the planner and researcher could be maintained by different teams, written in different languages, and scaled independently. The bearer token adds a minimal auth layer — real systems use OAuth2 or managed identity, covered in Module 13.
 
 ---
 
 ### Lab 11E: Dynamic Discovery
 
-**Goal:** Orchestrator selects the best agent for a task by reading Agent Cards.
+**Goal:** Build an orchestrator that discovers available agents at runtime and routes tasks to the best match.
 
-**Tasks:**
+**What to do:**
 
-1. Build a small registry of 3 agents (you can simulate the ones from this
-   module — they don't all need to be running):
-   - Technical Summarizer (from Lab 11A)
-   - Code Reviewer agent (add a stub server on port 8003)
-   - Data Analyst agent (stub on port 8004)
+1. Open `lab/src/a2a_discover.py`. Study `discover_agent()` — it fetches a
+   single Agent Card and stashes the `_discovered_url` for later use.
+   `discover_all_agents()` probes a list of URLs and collects reachable cards.
 
-2. Implement `discover_agents(registry_urls: list[str]) -> list[dict]`:
-   - Fetches Agent Cards from all provided URLs concurrently (httpx async)
-   - Returns list of cards, skipping unreachable agents
+2. Find `select_agent_for_task()` (TODO at Task 3). Implement LLM-based
+   selection: build a prompt listing each agent's name, description, and skills,
+   ask the LLM to respond with just the agent name, and match it back to
+   the agents list.
 
-3. Implement `select_best_agent(cards: list[dict], task_description: str) -> dict`:
-   - Passes the task description and all agent cards' descriptions/skills to the LLM
-   - Asks the LLM to select the best agent and return its name + reasoning
-   - Returns the selected card
+3. Start the researcher server from Lab 11A, then run discovery:
+   ```bash
+   # Terminal 1:
+   cd modules/module-11-a2a-protocol/lab
+   uv run python src/a2a_server.py
 
-4. Build an orchestrator that:
-   - Discovers available agents from the registry
-   - Takes a user task description
-   - Selects the best agent
-   - Routes the task to that agent via A2A
-   - Returns the result
+   # Terminal 2:
+   cd modules/module-11-a2a-protocol/lab
+   uv run python src/a2a_discover.py
+   ```
 
-5. Test with 3 different tasks that should route to different agents.
+**Expected result:**
+- Step 1 probes three URLs. Only `localhost:8080` responds; the others show `unreachable`:
+  ```
+  Probing http://localhost:8080 … found (researcher-agent)
+  Probing http://localhost:8081 … unreachable
+  Probing http://localhost:8082 … unreachable
+  ```
+- A Discovered Agents table shows the single reachable agent with its name, URL, skills, and streaming capability.
+- Step 3 (after implementing Task 3) selects `researcher-agent` for the sample task.
+- Step 4 submits a real query to the selected agent and prints the result.
 
-**File:** `lab/src/dynamic_discovery.py`
+**Why this matters:**
+Dynamic discovery is what makes multi-agent systems elastic. In production, agents register with a service registry (Consul, Azure Service Bus, Kubernetes DNS), and orchestrators query it at runtime. This means you can deploy a new specialist agent without restarting or reconfiguring the orchestrator — the same principle behind microservice discovery, applied to AI agents.
 
 ---
 
