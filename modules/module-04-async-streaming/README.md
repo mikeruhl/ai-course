@@ -310,102 +310,159 @@ uv sync
 
 ### Task 1: Convert the Sync Loop to Async
 
-In `src/async_agent.py`, implement `AsyncAgent.run()`.
+**Goal:** Convert a synchronous agent loop to fully async, proving that `await` and `asyncio.gather` enable concurrent I/O without changing the logic structure.
 
-The scaffold has the class structure. Your job:
+**What to do:**
 
-1. Replace the `NotImplementedError` in `run()` with a working async loop
-2. Use `httpx.AsyncClient` — the client is already set up in `__init__`
-3. Handle `finish_reason == "stop"` and `finish_reason == "tool_calls"` the
-   same as Module 3, but with `await` on the HTTP call
-4. Use `asyncio.gather` to execute multiple tool calls concurrently
+1. Open `lab/src/async_agent.py` and locate the `execute_tool_calls()` function (line 239) and the `AsyncAgent.run()` method (line 282)
+2. In `execute_tool_calls()` (line 239): define an inner `async def execute_one(tc)` that extracts `name` and `arguments` from the tool call, parses `arguments` with `json.loads()`, calls `await call_tool_async(name, args)` wrapped in try/except, logs the call with `console.print()`, and returns a dict with `{"role": "tool", "tool_call_id": tc["id"], "content": result}`. Then use `asyncio.gather(*[execute_one(tc) for tc in tool_calls])` to run all tool calls concurrently and return the list of results.
+3. In `AsyncAgent.run()` (line 282): replace the `NotImplementedError` at line 303 with a complete loop body. Build the payload dict with `messages`, `tools`, and `tool_choice`. Call `await self._client.post(BASE_URL, headers=HEADERS, json=payload)` and extract the JSON response. Get `message` from `response_data["choices"][0]["message"]` and `finish_reason` from `response_data["choices"][0]["finish_reason"]`. Append the assistant message to `messages`. If `finish_reason == "stop"`, return `message["content"]`. If `finish_reason == "tool_calls"`, await `execute_tool_calls(message["tool_calls"])` and extend `messages` with the results, then continue the loop.
+4. Run the command:
+   ```bash
+   uv run python src/async_agent.py --task "What files are in the current directory?"
+   ```
 
-Verify it works:
+**Expected result:**
+- Output similar to:
+  ```
+  --- Iteration 1 ---
+  [TOOL] list_directory({"path": "."})
+  --- Iteration 2 ---
+  Final Answer:
+  The current directory contains the following files and directories:
+    dir  src
+    file pyproject.toml
+    file .env.example
+    file .env
+  ```
+- The agent completes in 2 iterations: one to call the tool, one to formulate the answer.
 
-```bash
-uv run python src/async_agent.py --task "What files are in the current directory?"
-```
+**Why this matters:**
+The `await` keyword yields control during network waits, enabling one Python process to serve many concurrent agent sessions. Without async, each session blocks the entire process during every LLM and tool call, making it impossible to scale beyond a handful of users.
+
+---
 
 ### Task 2: Implement Basic Streaming (Text Only)
 
-Implement `AsyncAgent.stream()` — a streaming variant that:
+**Goal:** Implement SSE streaming so tokens print to the terminal as they are generated, reducing perceived latency to first-token time instead of full-response time.
 
-1. Sends the request with `"stream": true`
-2. Uses `response.aiter_lines()` to read the SSE stream
-3. Parses each `data:` line as JSON
-4. Prints each content delta to stdout as it arrives
-5. Accumulates and returns the full response when `[DONE]` is received
+**What to do:**
 
-You should see tokens printing live, not all at once at the end.
+1. Open `lab/src/async_agent.py` and locate the `AsyncAgent.stream()` method (line 325)
+2. At line 353, replace the `NotImplementedError` with streaming logic. Build a payload dict identical to Task 1 but add `"stream": true`. Use `async with self._client.stream("POST", BASE_URL, headers=HEADERS, json=payload) as resp:` to get a streaming response context manager.
+3. Inside the context manager (starting around line 350), add an `async for line in resp.aiter_lines():` loop. Skip lines that don't start with `"data: "` using `if not line.startswith("data: "): continue`. Strip the prefix with `payload = line[6:]`. If `payload == "[DONE]"`, break. Otherwise, parse with `chunk = json.loads(payload)`, extract `delta = chunk["choices"][0]["delta"]`, and if `delta.get("content")` exists, print it with `print(delta["content"], end="", flush=True)` and accumulate it in a `collected_content` list. After the loop, extract `finish_reason` from the final chunk and handle `"stop"` by returning the joined content.
+4. Run the command:
+   ```bash
+   uv run python src/async_agent.py --stream "Explain event loops in Python in 3 paragraphs."
+   ```
 
-**Test prompt:** *"Explain event loops in Python in 3 paragraphs."*
+**Expected result:**
+- Tokens appear one-by-one in the terminal with no buffering — text flows smoothly rather than appearing all at once
+- First token appears within ~200–500ms; the full response takes 3–8 seconds
+- Output ends with a `Final Answer` panel containing the complete accumulated text
 
-Observe: does the first token appear faster with streaming than the full
-response appears with the non-streaming version?
+**Why this matters:**
+Streaming does not reduce total generation time — the model produces tokens at the same rate. The benefit is UX: users see progress immediately, which reduces perceived latency by 5–10x in chat interfaces. This is the standard approach for any user-facing LLM interaction.
+
+---
 
 ### Task 3: Streaming with Tool Call Accumulation
 
-Extend the `stream()` implementation to handle tool calls in the stream.
+**Goal:** Extend the streaming implementation to handle tool call deltas, which arrive as fragmented JSON argument strings that must be accumulated before execution.
 
-The scaffold has the `tool_calls_acc` dict pattern shown in the concepts section.
-Your implementation must:
+**What to do:**
 
-1. Detect `"tool_calls"` deltas and accumulate them correctly
-2. After the stream ends with `finish_reason == "tool_calls"`:
-   - Execute the accumulated tool calls (using `asyncio.gather`)
-   - Append results to the message history
-   - Make another streaming call to the model
-   - Continue until `finish_reason == "stop"`
-3. Print something to indicate tool execution (e.g., `[TOOL] calling get_weather`)
+1. Open `lab/src/async_agent.py`, still in the `AsyncAgent.stream()` method (line 325). Extend your Task 2 implementation with tool call handling.
+2. Before the streaming loop (around line 343), initialize `tool_calls_acc: dict[int, dict] = {}` to track tool call accumulation. Inside the `async for line in resp.aiter_lines():` loop, after extracting `delta`, check if `delta.get("tool_calls")` exists. For each `tc_delta` in `delta.get("tool_calls", [])`, get the index with `idx = tc_delta["index"]`. If `idx` not in `tool_calls_acc`, initialize it with `{"id": "", "function": {"name": "", "arguments": ""}}`. Then accumulate: if `tc_delta.get("id")`, set `tool_calls_acc[idx]["id"] = tc_delta["id"]`. If `tc_delta.get("function", {}).get("name")`, append to `tool_calls_acc[idx]["function"]["name"]`. If `tc_delta.get("function", {}).get("arguments")`, append to `tool_calls_acc[idx]["function"]["arguments"]`.
+3. After the streaming loop ends, check `finish_reason`. If it's `"tool_calls"`, convert `tool_calls_acc` to a list with `tool_calls = list(tool_calls_acc.values())`. Construct the assistant message dict with `{"role": "assistant", "content": None, "tool_calls": tool_calls}` and append it to `messages`. Call `tool_results = await execute_tool_calls(tool_calls)` and extend `messages` with the results. Continue the outer for loop to make another streaming call.
+4. Run the command:
+   ```bash
+   uv run python src/async_agent.py --stream "What Python files exist in the current directory? List them with their sizes."
+   ```
 
-**Test prompt:** *"What Python files exist in the current directory? List them with their sizes."*
+**Expected result:**
+- Output similar to:
+  ```
+  --- Iteration 1 (stream) ---
+  [TOOL] list_directory({"path": "."})
+  --- Iteration 2 (stream) ---
+  [TOOL] read_file({"path": "src/async_agent.py"})
+  --- Iteration 3 (stream) ---
+  The Python files in the current directory are:
+  - src/async_agent.py (15,234 bytes)
+  ```
+- Tool call arguments accumulate silently across multiple SSE chunks, then execute all at once after the stream completes
 
-This should trigger `list_directory` and possibly `read_file` tool calls.
+**Why this matters:**
+In production streaming agents, tool call arguments arrive as partial JSON fragments (e.g., `{"loc` then `ation":` then `"Seattle"}`). Attempting to parse each fragment individually causes `json.JSONDecodeError`. The accumulator pattern is the only correct approach — and every production streaming agent must implement it.
+
+---
 
 ### Task 4: Sequential vs. Concurrent Benchmark
 
-Implement the `benchmark()` function in `src/async_agent.py`.
+**Goal:** Quantify the throughput gain from async concurrency by measuring wall-clock time for sequential vs. concurrent execution of identical LLM tasks.
 
-It should:
+**What to do:**
 
-1. Create a list of 5 identical simple tasks (short prompt, no tools needed)
-2. Run them sequentially using a `for` loop with `await`
-3. Run them concurrently using `asyncio.gather`
-4. Print a formatted table showing wall-clock time for each approach and the speedup
+1. Open `lab/src/async_agent.py` and locate the `benchmark()` function (line 399)
+2. At line 416, replace the `NotImplementedError` with the sequential benchmark. Record the start time with `start = time.perf_counter()`. Use a for loop: `for task in tasks:` and call `await agent.run(task)` inside. After the loop, calculate `sequential_time = time.perf_counter() - start`.
+3. At line 422, implement the concurrent benchmark. Record the start time again. Call `await asyncio.gather(*[agent.run(task) for task in tasks])` to run all 5 tasks concurrently. Calculate `concurrent_time = time.perf_counter() - start`.
+4. At line 429, build the results table. Create a `Table()` with title `"Sequential vs. Concurrent Benchmark"`. Add columns: `"Mode"`, `"Tasks"`, `"Total Time"`, `"Time per Task"`. Add two rows: one for sequential with values `"Sequential"`, `"5"`, `f"{sequential_time:.1f}s"`, `f"{sequential_time/5:.1f}s"`, and one for concurrent with `"Concurrent"`, `"5"`, `f"{concurrent_time:.1f}s"`, `f"{concurrent_time/5:.1f}s"`. Print the table with `console.print(table)`. Then calculate and print speedup: `console.print(f"\nSpeedup: {sequential_time / concurrent_time:.1f}x")`.
+5. Run the command:
+   ```bash
+   uv run python src/async_agent.py --benchmark
+   ```
 
-```
-Sequential:  12.4s
-Concurrent:   3.8s
-Speedup:      3.3x
-```
+**Expected result:**
+- Output similar to:
+  ```
+  ┌────────────┬───────┬────────────┬───────────────┐
+  │ Mode       │ Tasks │ Total Time │ Time per Task │
+  ├────────────┼───────┼────────────┼───────────────┤
+  │ Sequential │ 5     │ 12.4s      │ 2.5s          │
+  │ Concurrent │ 5     │ 3.8s       │ 0.8s          │
+  └────────────┴───────┴────────────┴───────────────┘
+  Speedup: 3.3x
+  ```
+- Anything above 2x on 5 tasks confirms the benefit. Typical results: 3–4x speedup.
 
-Run it:
+**Why this matters:**
+This benchmark proves the async scaling claim with real numbers from your Azure deployment. The speedup is sub-linear (not 5x for 5 tasks) because of rate limiting, connection pool contention, and server-side queuing. Understanding these diminishing returns is critical for capacity planning — you cannot just throw more concurrency at the problem indefinitely.
 
-```bash
-uv run python src/async_agent.py --benchmark
-```
-
-**Record your actual speedup number** — it will vary based on Azure region,
-model, and rate limits. Anything above 2x on 5 tasks confirms the benefit.
+---
 
 ### Task 5: Progress Display
 
-Build a simple progress display using streaming. When the agent is processing
-a long task, the user should see:
+**Goal:** Build a production-quality streaming progress display that shows thinking state, live tokens, tool call notifications, and a clearly demarcated final answer.
 
-1. A spinner or indicator showing the agent is thinking
-2. Each token printed as it arrives (not buffered)
-3. Tool call notifications: `[calling list_directory with path="."]`
-4. The final answer clearly demarcated
+**What to do:**
 
-Use `rich.live` or `rich.console` to format the output. The scaffold has
-a `stream_with_progress()` function stub to implement.
+1. Open `lab/src/async_agent.py` and locate the `stream_with_progress()` method (line 377)
+2. At line 393, replace the `NotImplementedError` with rich-formatted streaming. Reuse your Task 3 streaming loop logic but add rich formatting. Before the first token arrives, print `console.print("[dim]Thinking...[/dim]")`. When tool calls are detected and executed (after `finish_reason == "tool_calls"`), the `execute_tool_calls()` function already logs them as `[dim][TOOL] name(args)[/dim]`. When streaming content tokens, use `console.print(delta["content"], end="")` instead of plain `print()` to maintain rich formatting.
+3. After the streaming loop completes and you have the full response text, wrap it in a Panel. Use `Panel(final_answer, title="Final Answer", border_style="green")` and print it with `console.print()`. This creates a clearly demarcated final output.
+4. Run the command:
+   ```bash
+   uv run python src/async_agent.py --progress "Read all the README files in the modules directory and give me a one-sentence summary of each module."
+   ```
 
-**Test prompt:** *"Read all the README files in the modules directory and give
-me a one-sentence summary of each module."*
+**Expected result:**
+- Output similar to:
+  ```
+  Thinking...
+  [TOOL] search_files({"directory": ".", "pattern": "README.md"})
+  [TOOL] read_file({"path": "modules/module-01-.../README.md"})
+  [TOOL] read_file({"path": "modules/module-02-.../README.md"})
+  ...streaming tokens appear here as they generate...
+  ╭─ Final Answer ──────────────────────────────────╮
+  │ Module 1: Setting up Azure OpenAI and making... │
+  │ Module 2: Prompt engineering techniques for...  │
+  │ ...                                             │
+  ╰─────────────────────────────────────────────────╯
+  ```
+- Multiple tool calls execute concurrently, and the user sees activity throughout the entire multi-step process
 
-This is a multi-step task that will use several tool calls — a good stress
-test for the progress display.
+**Why this matters:**
+Long-running agent tasks that involve multiple tool calls can take 30+ seconds. Without progress feedback, users assume the system is broken and retry or abandon. A live progress display turns a frustrating black-box wait into a transparent, trustworthy interaction — this is a baseline UX requirement for any production agent.
 
 ---
 

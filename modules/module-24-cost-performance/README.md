@@ -207,20 +207,103 @@ cd lab && uv sync
 
 ### Task A: Token Counter
 
-Estimate token counts for various prompts, calculate costs at different model
-price points, make a real API call to see actual usage, and project monthly
-costs at scale.
+**Goal:** Show how token counts translate to dollar costs across models and how small differences compound at scale.
+
+**What to do:**
+1. Open `lab/src/cost_performance.py` and read `task_a` function (lines 93-173) and the `PRICING` dict (lines 47-53)
+2. Trace how `estimate_tokens` (lines 89-90) approximates token count (~4 chars/token), then how costs are computed per model using `(input_tokens * input_price + output_tokens * output_price) / 1_000_000` (line 125)
+3. Run:
+   ```bash
+   cd lab && uv run costperf --task A
+   ```
+
+**Expected result:**
+- A Token Estimates table showing four prompts (Simple, Medium, Long system prompt, RAG context) with estimated input/output tokens and per-call cost for gpt-4o-mini, gpt-4o, and gpt-4-turbo
+- An Actual Token Usage table from a real API call showing prompt tokens, completion tokens, and cost at two price points
+- A Monthly Cost projection table at 1000 calls/day for 30 days
+
+```
+Token Estimates & Cost per Call
+┌──────────────────┬──────────┬──────────┬──────────────┬──────────────┬──────────────┐
+│ Prompt           │ Est. In  │ Est. Out │ gpt-4o-mini  │ gpt-4o       │ gpt-4-turbo  │
+├──────────────────┼──────────┼──────────┼──────────────┼──────────────┼──────────────┤
+│ Simple           │ 4        │ 2        │ $0.000002    │ $0.000030    │ $0.000100    │
+│ RAG context      │ 513      │ 256      │ $0.000231    │ $0.003843    │ $0.012810    │
+└──────────────────┴──────────┴──────────┴──────────────┴──────────────┴──────────────┘
+
+Monthly Cost @ 1K calls/day
+│ gpt-4o-mini  │ $6.30    │
+│ gpt-4o       │ $97.50   │
+│ gpt-4-turbo  │ $330.00  │
+```
+
+**Why this matters:**
+Model selection is the single highest-leverage cost decision for agents. A 10-step agent running at GPT-4o prices can cost 15x more than the same agent on GPT-4o-mini. This exercise builds the habit of estimating costs before deploying and makes the tradeoff concrete.
 
 ### Task B: Semantic Cache
 
-Implement an embedding-based cache. Send several queries, observe cache hits
-for paraphrases and misses for different topics. Compare latency of cached
-vs uncached responses.
+**Goal:** Demonstrate that embedding-based caching catches paraphrased queries that exact-match caching would miss.
+
+**What to do:**
+1. Open `lab/src/cost_performance.py` and read the `SemanticCache` class (lines 188-212) and `task_b` function (lines 215-258)
+2. Study how `lookup` (lines 196-209) computes cosine similarity against all cached embeddings and returns a hit when similarity exceeds `0.90` (line 192). Note the seven test queries (lines 221-229) — three are semantic duplicates
+3. Run:
+   ```bash
+   cd lab && uv run costperf --task B
+   ```
+
+**Expected result:**
+- Seven queries processed in order. The first unique query is a CACHE MISS. Paraphrases ("Tell me the capital city of France", "What's France's capital?", "Can you explain quantum computing simply?") register as CACHE HITs
+- Different topics ("capital of Germany", "weather today") are CACHE MISSes
+- Cache Stats table showing ~3 hits, ~4 misses, ~43% hit rate
+
+```
+  CACHE MISS (820ms): What is the capital of France?
+  CACHE HIT  (95ms):  Tell me the capital city of France.
+  CACHE HIT  (88ms):  What's France's capital?
+  CACHE MISS (790ms): What is the capital of Germany?
+  CACHE MISS (830ms): Explain quantum computing in simple terms.
+  CACHE HIT  (92ms):  Can you explain quantum computing simply?
+  CACHE MISS (810ms): What is the weather like today?
+
+Cache Stats: Entries=4, Hits=3, Misses=4, Hit rate=43%
+```
+
+**Why this matters:**
+Real user traffic contains many paraphrases of the same question. A semantic cache with a 0.90 similarity threshold typically yields 20-40% hit rates in production, directly cutting LLM costs and latency. The threshold is a precision/recall tradeoff — too low and you return wrong answers for different questions; too high and you miss valid paraphrases.
 
 ### Task C: Pipeline Profiler
 
-Instrument a multi-step agent pipeline (embed → retrieve → prompt → generate
-→ validate) with timing. Display a waterfall chart showing where latency goes.
+**Goal:** Instrument each stage of an agent pipeline with timing to identify where latency is spent.
+
+**What to do:**
+1. Open `lab/src/cost_performance.py` and read the `PipelineProfiler` class (lines 276-304) and `task_c` function (lines 307-357)
+2. Trace the five profiled stages: `embed_query` (lines 316-318), `retrieve_docs` (lines 321-331), `construct_prompt` (lines 334-340), `llm_generation` (lines 343-346), `output_validation` (lines 349-351). Note how `start`/`stop` (lines 283-288) record `TimingEntry` objects and `report` (lines 290-304) renders a waterfall bar chart
+3. Run:
+   ```bash
+   cd lab && uv run costperf --task C
+   ```
+
+**Expected result:**
+- The agent answers a question about securing AI agents in production using retrieved context
+- A Pipeline Profile table with each step's duration in milliseconds, percentage of total, and a visual waterfall bar
+- LLM generation dominates at ~60-70% of total time
+
+```
+Pipeline Profile (total: 1340ms)
+┌──────────────────────┬──────────┬──────────┬──────────────────────────────────┐
+│ Step                 │ Duration │ % Total  │ Waterfall                        │
+├──────────────────────┼──────────┼──────────┼──────────────────────────────────┤
+│ embed_query          │ 95       │ 7.1%     │ ███░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
+│ retrieve_docs        │ 210      │ 15.7%    │ ██████░░░░░░░░░░░░░░░░░░░░░░░░ │
+│ construct_prompt     │ 1        │ 0.1%     │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
+│ llm_generation       │ 920      │ 68.7%    │ ██████████████████████████████░ │
+│ output_validation    │ 1        │ 0.1%     │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
+└──────────────────────┴──────────┴──────────┴──────────────────────────────────┘
+```
+
+**Why this matters:**
+Without instrumentation, teams often optimize the wrong stage. This profiler confirms that LLM generation is the bottleneck (60-80% of wall time), which means the highest-ROI optimizations are shorter prompts, faster models, and streaming — not faster retrieval or validation logic.
 
 ---
 

@@ -396,72 +396,275 @@ Example ASCII output for the ReAct loop:
 
 The lab is split across two files: `langgraph_agent.py` (core graph building) and `hitl_agent.py` (human-in-the-loop).
 
-### Task A — Basic StateGraph
-
-In `src/langgraph_agent.py`:
-
-1. Implement `agent_node` to call `llm_with_tools.invoke(state["messages"])` and return the result.
-2. Replace `llm_with_tools = None` with `llm.bind_tools(TOOLS)`.
-3. Build the graph: `StateGraph(AgentState)` → add nodes → add edges → `compile()`.
-4. In `main()`, invoke the graph with a user query and print the final response.
-
-Expected result: the agent calls `search_knowledge_base` when asked about LangGraph topics.
-
-### Task B — Conditional Routing
-
-Implement `should_continue`:
-- If the last message in `state["messages"]` has `tool_calls` and that list is non-empty → return `"tools"`.
-- Otherwise → return `END`.
-
-Wire it up with `add_conditional_edges("agent", should_continue)`.
-
-Test: ask a question that requires a tool call, and one that doesn't. Verify routing.
-
-### Task C — Checkpointing (Multi-Turn)
-
-Implement `build_graph_with_memory()`:
-1. Create `MemorySaver()` checkpointer.
-2. Compile the graph with `checkpointer=MemorySaver()`.
-3. Create a `config` with `thread_id="test-thread"`.
-4. Invoke with "My favorite programming language is Python."
-5. Invoke again with "What programming language did I just mention?"
-6. Verify the agent correctly recalls from the previous turn.
-
-### Task D — Graph Visualization
-
-Implement `print_graph_structure(graph)`:
-1. Call `graph.get_graph().draw_ascii()` and print it.
-2. Print a summary of nodes and edges.
-
-Compare the output to the ASCII diagram in this README.
-
-### HITL Tasks (hitl_agent.py)
-
-**Task 1**: Define `agent_node` that calls the LLM with `delete_records` and `send_notification` tools bound. Set `pending_action` in the state when a tool call is detected.
-
-**Task 2**: Compile the graph with `interrupt_before=["execute_node"]`. The graph should pause before executing dangerous actions.
-
-**Task 3**: Implement `approval_node` that uses `rich.prompt.Confirm` to ask the human whether to proceed. Set `state["approved"]` accordingly.
-
-**Task 4**: After human approval, resume the graph with `graph.invoke(None, config=config)`. If rejected, update state to skip execution and route to END.
-
----
-
-## Setup
+### Setup
 
 ```bash
 cd modules/module-19-langgraph/lab
 uv venv && uv pip install -e .
 cp .env.example .env
 # Fill in your Azure OpenAI credentials
-
-# Run tasks
-uv run python src/langgraph_agent.py --task A
-uv run python src/langgraph_agent.py --task B
-uv run python src/langgraph_agent.py --task C
-uv run python src/langgraph_agent.py --task D
-uv run python src/hitl_agent.py
 ```
+
+### Task A: Basic StateGraph
+
+**Goal:** Build the core ReAct loop as a LangGraph StateGraph with an agent node, a tool node, and the cycle that connects them.
+
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-19-langgraph\lab\src\langgraph_agent.py` and locate line 132. Replace `llm_with_tools = None` with `llm_with_tools = llm.bind_tools(TOOLS)`. The `TOOLS` list (line 122) contains `search_knowledge_base` and `calculate`.
+2. Implement `agent_node` (line 142): call `llm_with_tools.invoke(state["messages"])` and return `{"messages": [response]}`. The `add_messages` reducer will append the response to the existing message list.
+3. Build the graph at line 181: create `graph_builder = StateGraph(AgentState)`, add two nodes with `graph_builder.add_node("agent", agent_node)` and `graph_builder.add_node("tools", ToolNode(TOOLS))`, add edges: `graph_builder.add_edge(START, "agent")`, `graph_builder.add_conditional_edges("agent", should_continue)`, and `graph_builder.add_edge("tools", "agent")` (the cycle). Compile with `graph = graph_builder.compile()`.
+4. Run:
+   ```bash
+   uv run python src/langgraph_agent.py --task A
+   ```
+
+**Expected result:**
+```
+Module 19 — LangGraph Agent — Task A
+Query: What is LangGraph checkpointing and how does it work?
+
+Query: What is LangGraph checkpointing and how does it work?
+╭──── Agent Response ────╮
+│ LangGraph checkpointing saves graph state to persistent storage after every  │
+│ step. This enables pause/resume, multi-turn conversations, and HITL          │
+│ interrupts. MemorySaver is for development; PostgresSaver for production.    │
+╰────────────────────────╯
+```
+- The agent calls `search_knowledge_base` with `"checkpointing"` as the query, receives the knowledge base entry, and synthesizes a response.
+- The `tools → agent` edge is the cycle that makes this a ReAct loop, not a linear chain.
+
+**Why this matters:**
+The cycle from `tools` back to `agent` is what differentiates LangGraph from a simple chain. Without it, the agent could call a tool once but never iterate. In production ReAct agents, this cycle runs 2-5 times on average per query. The `should_continue` function (Task B) is what prevents infinite cycling.
+
+### Task B: Conditional Routing
+
+**Goal:** Implement the routing function that decides whether the agent should call more tools or return a final answer.
+
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-19-langgraph\lab\src\langgraph_agent.py` and locate `should_continue` (line 154).
+2. Check `state["messages"][-1]` for a `tool_calls` attribute. If `hasattr(last_message, "tool_calls")` and `last_message.tool_calls` is non-empty, return `"tools"`. Otherwise, return `END`.
+3. Wire it up with `add_conditional_edges("agent", should_continue)` (this should already be in your graph from Task A at line 181).
+4. Test with two queries — one that triggers a tool call and one that does not:
+   ```bash
+   uv run python src/langgraph_agent.py --task B --query "What is a StateGraph?"
+   uv run python src/langgraph_agent.py --task B --query "What is 2 + 2?"
+   ```
+
+**Expected result:**
+```
+Query: What is a StateGraph?
+╭──── Agent Response ────╮
+│ StateGraph is the main graph class in LangGraph. You add nodes with          │
+│ add_node(), connect them with add_edge() or add_conditional_edges()...       │
+╰────────────────────────╯
+
+Query: What is 2 + 2?
+╭──── Agent Response ────╮
+│ 4                                                                            │
+╰────────────────────────╯
+```
+- The first query routes through `agent → tools → agent → END` (tool call for knowledge base lookup).
+- The second query routes through `agent → tools → agent → END` (tool call to `calculate`), or possibly `agent → END` if the LLM answers directly.
+
+**Why this matters:**
+`should_continue` is the exit condition for the ReAct loop. A bug here — always returning `"tools"` or always returning `END` — either causes infinite looping or prevents any tool use. In production, add a maximum iteration counter to `AgentState` and check it in `should_continue` as a safety net against infinite loops.
+
+### Task C: Checkpointing (Multi-Turn)
+
+**Goal:** Add persistent state via `MemorySaver` so the agent remembers previous messages across separate `.invoke()` calls.
+
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-19-langgraph\lab\src\langgraph_agent.py` and locate `build_graph_with_memory()` (line 189).
+2. Import `MemorySaver` from `langgraph.checkpoint.memory`. Create `checkpointer = MemorySaver()` and build the same graph as Task A/B, but compile it with `graph = graph_builder.compile(checkpointer=checkpointer)`.
+3. Create a config dict: `config = {"configurable": {"thread_id": "demo-thread-1"}}`.
+4. Return `(graph, config)`. The `main()` function (line 298) handles the two-turn test automatically when you run Task C.
+5. Run:
+   ```bash
+   uv run python src/langgraph_agent.py --task C
+   ```
+
+**Expected result:**
+```
+Task C: Multi-turn conversation with MemorySaver
+
+Turn 1:
+Query: My favorite AI framework is LangGraph.
+╭──── Agent Response ────╮
+│ That's great! LangGraph is a powerful framework for building stateful agents.│
+╰────────────────────────╯
+
+Turn 2 (should recall Turn 1):
+Query: What AI framework did I just mention?
+╭──── Agent Response ────╮
+│ You mentioned LangGraph as your favorite AI framework.                       │
+╰────────────────────────╯
+```
+- Turn 2 correctly recalls "LangGraph" from Turn 1 because the checkpointer persists messages across invocations under the same `thread_id`.
+- Without the checkpointer, Turn 2 would have no context and could not answer.
+
+**Why this matters:**
+Checkpointing is what makes LangGraph agents usable in real applications. Without it, every invocation starts from scratch. In production, replace `MemorySaver` (in-memory, lost on restart) with `PostgresSaver` backed by Azure Database for PostgreSQL. The `thread_id` isolates conversations — critical for multi-tenant systems where user A must not see user B's state.
+
+### Task D: Graph Visualization
+
+**Goal:** Print the graph structure as ASCII art and inspect the node/edge topology to verify your graph matches the expected ReAct architecture.
+
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-19-langgraph\lab\src\langgraph_agent.py` and locate `print_graph_structure()` (line 217).
+2. Call `ascii_art = compiled_graph.get_graph().draw_ascii()` and print the result.
+3. Also print the node list and edge list for a complete summary: `g = compiled_graph.get_graph()`, then print `list(g.nodes.keys())` and `[(e.source, e.target) for e in g.edges]`.
+4. Run:
+   ```bash
+   uv run python src/langgraph_agent.py --task D
+   ```
+
+**Expected result:**
+```
+Task D: Graph Structure
+         +-----------+
+         | __start__ |
+         +-----------+
+               *
+               *
+               *
+          +-------+
+          | agent |
+          +-------+
+         *         .
+        *            .
+       *               .
+ +-------+           +---------+
+ | tools |           | __end__ |
+ +-------+           +---------+
+
+Nodes: ['__start__', 'agent', 'tools', '__end__']
+Edges: [('__start__', 'agent'), ('tools', 'agent')]
+```
+- The conditional edge from `agent` to either `tools` or `__end__` appears as the branch in the ASCII art.
+- The `tools → agent` edge is the cycle.
+
+**Why this matters:**
+Graph visualization is a debugging tool. When an agent misbehaves in production, the first question is "what path did it take through the graph?" The ASCII output works in any terminal and CI log. For richer visualization, `draw_mermaid_png()` generates diagrams for documentation. LangSmith provides runtime tracing of actual execution paths, not just the static graph.
+
+### Task 1 (HITL): Agent Node with Dangerous Tool Detection
+
+**Goal:** Build an agent node that detects when the LLM proposes a dangerous action and marks it for human review.
+
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-19-langgraph\lab\src\hitl_agent.py` and locate `agent_node` (line 106).
+2. Call `response = llm_with_tools.invoke(state["messages"])`. The LLM has `delete_records` and `send_notification` tools bound (line 89).
+3. If `response.tool_calls` is non-empty, build a human-readable `pending_action` string from the tool call name and arguments. For example: `f"{tc.name}({', '.join(f'{k}={v!r}' for k, v in tc.args.items())})"` would produce `"delete_records(table='users', condition='active=False')"`.
+4. Return `{"messages": [response], "pending_action": pending_action_str or None}`.
+5. This task is tested as part of the full HITL flow:
+   ```bash
+   uv run python src/hitl_agent.py
+   ```
+
+**Expected result:**
+```
+╭── Module 19 — Human-in-the-Loop Agent Demo ──╮
+
+User: Please delete all inactive users from the 'users' table (condition: active=False)
+
+[Agent proposes] pending_action: delete_records(table='users', condition='active=False')
+```
+- The agent node identifies the dangerous tool call and populates `pending_action` in the state.
+- The action is not yet executed — it is only proposed.
+
+**Why this matters:**
+Separating "propose" from "execute" is the foundation of safe agent design. In production, the `pending_action` string is what gets shown in a Slack approval message, a web UI modal, or an audit log. The clearer this string, the better the human can evaluate whether to approve.
+
+### Task 2 (HITL): Graph with interrupt_before
+
+**Goal:** Build the HITL graph topology and compile it with `interrupt_before=["execute_node"]` to pause execution before dangerous actions.
+
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-19-langgraph\lab\src\hitl_agent.py` and locate `after_agent_route` (line 206) and `build_hitl_graph` (line 243).
+2. Implement `after_agent_route`: check `state["messages"][-1].tool_calls`. If non-empty, return `"approval"`; otherwise return `END`.
+3. In `build_hitl_graph`, create `checkpointer = MemorySaver()`, then build `StateGraph(HITLState)` with three nodes: `graph_builder.add_node("agent", agent_node)`, `graph_builder.add_node("approval", approval_node)`, `graph_builder.add_node("execute", execute_node)`. Add edges: `graph_builder.add_edge(START, "agent")`, `graph_builder.add_conditional_edges("agent", after_agent_route)`, `graph_builder.add_edge("approval", "execute")`, `graph_builder.add_conditional_edges("execute", after_execute_route)`.
+4. Compile with `graph = graph_builder.compile(checkpointer=checkpointer, interrupt_before=["execute"])`.
+5. Create `config = {"configurable": {"thread_id": "hitl-demo-1"}}` and return `(graph, config)`.
+6. Run:
+   ```bash
+   uv run python src/hitl_agent.py
+   ```
+
+**Expected result:**
+```
+Graph Structure:
+  __start__ → agent → (approval OR __end__) → execute → (agent OR __end__)
+
+(Graph interrupted: GraphInterrupt)
+Graph paused at: ('execute_node',)
+Approved: True
+```
+- The graph pauses before `execute_node` runs, even though `approval_node` already captured the human's decision.
+- The interrupt structure demonstrates the production pattern where approval happens asynchronously (via web UI or Slack).
+
+**Why this matters:**
+`interrupt_before` enables asynchronous human approval. In production, the agent runs in a cloud function, proposes an action, and pauses. The state is persisted to PostgreSQL. Hours later, a human approves via a web UI. The graph resumes from the saved checkpoint. This decoupling of agent execution from human review is essential for enterprise workflows.
+
+### Task 3 (HITL): Approval Node
+
+**Goal:** Implement the interactive approval gate that presents the proposed action and captures the human's yes/no decision.
+
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-19-langgraph\lab\src\hitl_agent.py` and locate `approval_node` (line 135).
+2. Display `state["pending_action"]` in a `rich.Panel` with `console.print(Panel(state["pending_action"], title="Pending Action"))`.
+3. Use `approved = Confirm.ask("Approve this action?")` (already imported from `rich.prompt` at line 37) to capture the human's decision.
+4. Return `{"approved": approved}`.
+5. Run:
+   ```bash
+   uv run python src/hitl_agent.py
+   ```
+
+**Expected result:**
+```
+╭── Pending Action ──╮
+│ delete_records(table='users', condition='active=False') │
+╰────────────────────╯
+Approve this action? [y/n]: y
+```
+- Answering `y` sets `state["approved"] = True`. The graph will execute the tool call when resumed.
+- Answering `n` sets `state["approved"] = False`. The graph will skip execution and route to END.
+
+**Why this matters:**
+The approval node is the safety net for irreversible actions. In this lab it uses a terminal prompt, but in production it would be a webhook callback, a Slack interactive message, or a web form. The pattern is the same: capture a boolean decision and store it in graph state.
+
+### Task 4 (HITL): Execute and Resume
+
+**Goal:** Implement the execute node that reads the approval flag and either runs the tool calls or aborts, then resume the graph after the interrupt.
+
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-19-langgraph\lab\src\hitl_agent.py` and locate `execute_node` (line 165) and `after_execute_route` (line 188).
+2. In `execute_node`: check `state["approved"]`. If `True`, find the last `AIMessage` in `state["messages"]` that has `tool_calls`, iterate through each tool call, find the matching tool in `DANGEROUS_TOOLS` by name, call it with the arguments, and build `ToolMessage` objects with `content=result` and `tool_call_id=tc.id`. Return `{"messages": [list of ToolMessages]}`. If `False`, return `{"messages": [AIMessage(content="Action rejected by human operator.")]}`.
+3. In `after_execute_route`: check the last message in `state["messages"]`. If it is a `ToolMessage`, return `"agent"` (route back to agent for a final summary). If it is an `AIMessage` (rejection message), return `END`.
+4. Run the full demo:
+   ```bash
+   uv run python src/hitl_agent.py
+   ```
+
+**Expected result:**
+```
+Resuming graph after approval decision...
+EXECUTING: DELETE FROM users WHERE active=False
+╭──── Agent Final Response ────╮
+│ Done. Deleted 42 records from the 'users' table where active=False.         │
+╰──────────────────────────────╯
+
+User: Then send a notification to #ops-alerts saying the cleanup is complete.
+Approve this action? [y/n]: n
+
+╭──── Agent Final Response ────╮
+│ Action rejected by human operator.                                           │
+╰──────────────────────────────╯
+```
+- Approved actions execute the tool and route back to the agent for a summary response.
+- Rejected actions skip execution entirely and terminate the graph.
+- The two-message demo (`delete` then `notify`) shows both approval and rejection paths.
+
+**Why this matters:**
+This completes the HITL pattern: propose → pause → review → execute-or-abort. For irreversible operations (database deletes, payment charges, email sends), this pattern is not optional — it is a compliance requirement in most enterprise environments. The `interrupt_before` + checkpointer combination makes this pattern portable across process boundaries and restarts.
 
 ---
 

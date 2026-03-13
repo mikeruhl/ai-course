@@ -371,19 +371,34 @@ uv sync
 
 ### Task A: In-Context Memory
 
-**Goal:** Implement `ConversationBuffer` and `SummarizingBuffer`.
+**Goal:** Implement `ConversationBuffer` and `SummarizingBuffer` to see how sliding-window and summarization strategies trade off token cost versus context fidelity.
 
-1. Implement `ConversationBuffer` — a sliding window that keeps the last
-   `max_turns` conversation exchanges. `get_messages()` returns the list
-   ready to prepend to any LLM call.
+**What to do:**
+1. Open `lab/src/memory_systems.py` and locate the `SummarizingBuffer` class
+2. Implement `_summarize_older_turns()` (line ~136) — the `ConversationBuffer` class is already complete and serves as reference
+3. The method must split `self._recent` into messages to compress and messages to keep, call Azure OpenAI via `_chat()` with `temperature=0`, store the summary in `self._summary`, and set `self._recent` to only the kept messages
+4. Run the task:
+   ```bash
+   cd modules/module-08-memory-systems/lab
+   uv run memory --task A
+   ```
 
-2. Implement `SummarizingBuffer.summarize_older_turns()` — when the turn
-   count exceeds `max_recent`, call Azure OpenAI to compress the older turns
-   into a concise summary message. The summary becomes a single
-   `{"role": "user", "content": "[SUMMARY] ..."}` entry.
+**Expected result:**
+- A `ConversationBuffer(max_turns=3)` demo showing 6 messages retained after 7 turns, with oldest turns evicted
+- A `SummarizingBuffer(max_recent=4)` demo showing 8 exchanges compressed into a summary + 4 recent messages
+- A comparison table like:
+  ```
+  ┌─────────────────────────────────────┬─────────────────────┬────────────────┐
+  │ Type                                │ Messages in context │ Token estimate │
+  ├─────────────────────────────────────┼─────────────────────┼────────────────┤
+  │ ConversationBuffer(max_turns=3)     │                   6 │             42 │
+  │ SummarizingBuffer(max_recent=4)     │                   5 │             68 │
+  └─────────────────────────────────────┴─────────────────────┴────────────────┘
+  ```
+- The summarizing buffer should have fewer messages but may have a higher token estimate because the summary itself contains compressed information
 
-3. Run a 15-turn simulated conversation. Compare token estimates between
-   the raw buffer and the summarizing buffer after 15 turns.
+**Why this matters:**
+In production chat agents, unbounded conversation history causes token cost to grow linearly per turn. The summarizing buffer is the standard pattern for long-running sessions — it preserves key facts (tech decisions, user preferences) while capping context size. Getting the summarization prompt right determines whether critical details survive compression.
 
 **Run with:** `uv run memory --task A`
 
@@ -391,20 +406,41 @@ uv sync
 
 ### Task B: Episodic Memory
 
-**Goal:** Implement `EpisodicMemory` — extract and recall facts from session history.
+**Goal:** Implement `EpisodicMemory` to extract discrete facts from conversation text and recall them by relevance query.
 
-1. Implement `extract_and_save(text)` — calls Azure OpenAI to identify key
-   facts in the text (entities, preferences, decisions, constraints). Save
-   each extracted fact to the session's JSON store.
+**What to do:**
+1. Open `lab/src/memory_systems.py` and locate the `EpisodicMemory` class (line ~187)
+2. Implement `extract_and_save(text)` (line ~216) — build a prompt that instructs the model to output a JSON array of standalone fact strings, call Azure OpenAI with `temperature=0`, parse the JSON, and call `self.save(fact)` for each
+3. Implement `recall(query, top_k=3)` (line ~245) — load all stored facts, compute Jaccard similarity (`len(intersection) / len(union)` over word sets) between the query and each fact, return the top-k facts sorted by score
+4. Run the task:
+   ```bash
+   cd modules/module-08-memory-systems/lab
+   uv run memory --task B
+   ```
 
-2. Implement `recall(query, top_k=3)` — given a query string, return the
-   most relevant stored facts. For the basic version, use keyword overlap
-   (split query and facts into words, compute intersection). The advanced
-   version uses embedding similarity.
+**Expected result:**
+- Five user messages are processed, each producing extracted facts:
+  ```
+  Input: I'm building a Python microservice on Azure Container Apps.
+  Extracted: ["User is building a Python microservice", "User is using Azure Container Apps"]
+  ```
+- A recall table showing relevant facts matched to queries:
+  ```
+  ┌──────────────────────────────────────────────┬──────────────────────────────────────────────┐
+  │ Query                                        │ Recalled Facts                               │
+  ├──────────────────────────────────────────────┼──────────────────────────────────────────────┤
+  │ What stack is the user using?                │ • User is building a Python microservice      │
+  │                                              │ • User is using Azure Container Apps          │
+  │                                              │ • User is using Azure Blob Storage            │
+  ├──────────────────────────────────────────────┼──────────────────────────────────────────────┤
+  │ Are there any security requirements?         │ • User handles medical data                   │
+  │                                              │ • Encryption at rest is required              │
+  └──────────────────────────────────────────────┴──────────────────────────────────────────────┘
+  ```
+- A JSON file created at `./memory/<session_id>.json` containing all extracted facts
 
-3. Test: simulate 5 user messages that establish facts ("I'm building a
-   Python service on Azure", "I prefer async patterns", etc.), then query
-   "What stack is the user using?" and verify the right facts are recalled.
+**Why this matters:**
+Episodic memory is how agents remember user-specific context across turns without re-asking. The extraction prompt quality directly determines what gets stored — too aggressive and you store noise, too conservative and you miss critical preferences. Jaccard recall is a cheap baseline; production systems upgrade to embedding-based recall for synonym handling.
 
 **Run with:** `uv run memory --task B`
 
@@ -412,25 +448,41 @@ uv sync
 
 ### Task C: Semantic Memory (Azure AI Search)
 
-**Goal:** Build a vector memory store backed by Azure AI Search.
+**Goal:** Build a vector memory store backed by Azure AI Search to demonstrate cross-session knowledge retrieval by semantic similarity.
 
-1. Implement `create_index()` — create the Azure AI Search index with the
-   HNSW vector search configuration. Use the schema shown in the Concepts
-   section. Handle the case where the index already exists (HTTP 409 = ok).
+**What to do:**
+1. Open `lab/src/memory_systems.py` and locate the four standalone functions starting at line ~275
+2. Implement `create_index()` (line ~275) — PUT the index definition to `{SEARCH_ENDPOINT}/indexes/{SEARCH_INDEX}` with HNSW vector config (m=4, efConstruction=400, efSearch=500, cosine metric)
+3. Implement `embed_text(text)` (line ~319) — POST to `EMBED_URL` with `{"input": text}`, return `response["data"][0]["embedding"]`
+4. Implement `upsert_memory(memory_id, content)` (line ~340) — call `embed_text`, then POST to `docs/index` with `@search.action: "mergeOrUpload"`
+5. Implement `semantic_search(query, top_k=5)` (line ~368) — embed the query, POST to `docs/search` with `vectorQueries`, return `[{"content": str, "score": float}]`
+6. Provision Azure AI Search first, then run:
+   ```bash
+   cd modules/module-08-memory-systems/terraform
+   terraform init && terraform apply
+   cd ../lab
+   # Update .env with AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_KEY
+   uv run memory --task C
+   ```
 
-2. Implement `embed_text(text)` — call the Azure OpenAI embeddings endpoint
-   and return the 1536-dimensional vector.
+**Expected result:**
+- Index creation confirmation: `Index created: memory-store`
+- Five memory documents upserted (Azure services descriptions)
+- Three semantic search queries returning ranked results:
+  ```
+  Query: How does Azure handle secrets and credentials?
+    1. (score=0.842) Azure Key Vault stores secrets, keys, and certificates...
+    2. (score=0.791) Managed Identity allows Azure services to authenticate...
+    3. (score=0.623) Azure OpenAI Service provides REST API access...
 
-3. Implement `upsert_memory(memory_id, content)` — embed the content and
-   upload to the search index. Use the `@search.action: "mergeOrUpload"`
-   action so repeated calls update rather than duplicate.
+  Query: How do I avoid hardcoding passwords in my app?
+    1. (score=0.811) Managed Identity allows Azure services to authenticate...
+    2. (score=0.789) Azure Key Vault stores secrets, keys, and certificates...
+  ```
+- The paraphrased query ("avoid hardcoding passwords") should still retrieve the Key Vault and Managed Identity documents despite no shared keywords
 
-4. Implement `semantic_search(query, top_k=5)` — embed the query and run
-   a vector search. Return a list of `{"content": str, "score": float}` dicts
-   sorted by score descending.
-
-5. Test the full cycle: upsert 5 memory documents, then run 3 queries and
-   verify the right documents come back.
+**Why this matters:**
+Semantic memory is the foundation of RAG and long-term agent knowledge. The upsert pattern (`mergeOrUpload`) prevents duplicate entries when facts are updated — a common production bug when using insert-only. The HNSW parameters you configure here directly control the recall-vs-latency tradeoff at query time.
 
 **Run with:** `uv run memory --task C`
 
@@ -438,23 +490,43 @@ uv sync
 
 ### Task D: Procedural Memory
 
-**Goal:** Cache and replay successful tool call sequences.
+**Goal:** Cache and replay successful tool call sequences to skip re-planning for repeated task patterns.
 
-1. Implement `save_sequence(task_description, tool_calls)` — normalize the
-   task description (lowercase, strip punctuation), hash it as the key, and
-   persist the sequence to a JSON file.
+**What to do:**
+1. Open `lab/src/memory_systems.py` and locate the `ProceduralMemory` class (line ~405)
+2. Implement `save_sequence(task_description, tool_calls)` (line ~438) — call `self._normalize()` on the description, generate an MD5 hash key (`hashlib.md5(normalized.encode()).hexdigest()[:12]`), store to JSON via `self._load()` / `self._save()`
+3. Implement `find_similar(task_description, threshold=0.3)` (line ~458) — normalize the query, split into word sets, compute Jaccard similarity against each stored entry, return the `tool_calls` list if best score >= threshold, else `None`
+4. Run the task:
+   ```bash
+   cd modules/module-08-memory-systems/lab
+   uv run memory --task D
+   ```
 
-2. Implement `find_similar(task_description, threshold=0.3)` — search all
-   stored sequences for one where the Jaccard similarity between the query
-   words and the stored task description words exceeds the threshold. Return
-   the tool calls list, or None if no match.
+**Expected result:**
+- Three tool sequences saved (GitHub issues, Docker deploy, resource group creation):
+  ```
+  ┌────────────────────────────────────────────────────────────────────┬───────┐
+  │ Description                                                      │ Steps │
+  ├────────────────────────────────────────────────────────────────────┼───────┤
+  │ list all open github issues in a repository                      │     2 │
+  │ deploy a docker container to azure container apps                │     3 │
+  │ create a new azure resource group and tag it                     │     2 │
+  └────────────────────────────────────────────────────────────────────┴───────┘
+  ```
+- Four retrieval tests with match/no-match verification:
+  ```
+  OK MATCH    | expected MATCH    | Query: 'show me open GitHub issues'
+       Retrieved 2 tool call(s): github_list_issues...
+  OK MATCH    | expected MATCH    | Query: 'deploy container to Azure'
+  OK NO MATCH | expected NO MATCH | Query: 'summarize all closed pull requests'
+  OK MATCH    | expected MATCH    | Query: 'set up a new resource group'
+  ```
+- A `./memory/procedural.json` file containing the cached sequences
 
-3. Test: save a sequence for "list all open GitHub issues", then query for
-   "show me open GitHub issues" and verify the sequence is retrieved. Query
-   for "deploy to production" and verify None is returned.
+**Why this matters:**
+Procedural memory turns an agent's successful task completions into reusable plans. This avoids redundant LLM planning calls for repeated workflows, reducing both latency and cost. The Jaccard threshold is the safety valve — set it too low and the agent replays wrong sequences for loosely similar tasks, set it too high and it never reuses anything.
 
-**Advanced:** Replace keyword similarity with semantic search from Task C to
-improve recall accuracy.
+**Advanced:** Replace keyword similarity with semantic search from Task C to improve recall accuracy.
 
 **Run with:** `uv run memory --task D`
 

@@ -185,21 +185,80 @@ cd lab && uv sync
 
 ### Task A: Agent Creation + Tool Calling
 
-Create an agent with three tools (calculator, document search, date lookup)
-and run it against several queries. Observe how the agent decides which
-tools to call and how it combines tool results.
+**Goal:** Create a managed-style agent with three tools and observe how it autonomously selects and combines tools to answer queries.
+
+**What to do:**
+1. Open `lab/src/foundry_agent.py`
+2. Look at the `task_a()` function (line ~187) and the `TOOLS` list (line ~93) — the agent has `calculate`, `search_docs`, and `get_current_date` tools
+3. Run: `uv run foundry --task A`
+
+**Expected result:**
+- Three queries execute in sequence. For the first query ("What is 1024 * 768 and what is today's date?"), you should see two tool calls:
+  ```
+  Tool call: calculate({"expression": "1024 * 768"})
+  Tool call: get_current_date({})
+  ```
+- The second query triggers `search_docs`, returning Azure OpenAI pricing snippets
+- The third query chains `search_docs` output into `calculate` to compute cost
+
+**Why this matters:**
+The Foundry model treats agents as reusable definitions — instructions plus tools plus model. You define behavior declaratively; the service (or in this lab, the `run_agent` loop) handles tool dispatch. This separation is what makes managed agent services faster to prototype than hand-rolled loops.
 
 ### Task B: Thread Management
 
-Create a persistent thread and hold a multi-turn conversation. Verify that
-the agent retains context from earlier messages (e.g., remembers your name).
-This demonstrates the thread-as-state pattern.
+**Goal:** Demonstrate that a persistent thread retains full conversation context across multiple turns.
+
+**What to do:**
+1. Open `lab/src/foundry_agent.py`
+2. Look at the `task_b()` function (line ~225) — it creates a `Thread` with metadata and runs four conversation turns, the last of which tests context retention ("What was my name again?")
+3. Run: `uv run foundry --task B`
+
+**Expected result:**
+- Four exchanges print in sequence. The final question ("What was my name again?") should produce a response containing "Mike"
+- After the conversation, a table displays the full thread state:
+  ```
+  Thread abc123 — 8 messages
+  ┌──────────┬──────────────────────────────────────────┐
+  │ Role     │ Content                                  │
+  ├──────────┼──────────────────────────────────────────┤
+  │ user     │ My name is Mike and I'm building a...    │
+  │ assistant│ ...                                      │
+  │ ...      │ ...                                      │
+  │ assistant│ Your name is Mike.                        │
+  └──────────┴──────────────────────────────────────────┘
+  ```
+
+**Why this matters:**
+In AI Foundry, threads persist server-side so you never resend full message history. This is the key difference from raw chat completions — you get multi-session continuity without managing a database. Understanding this primitive is essential before deciding whether managed state justifies the vendor coupling.
 
 ### Task C: Multi-Agent Handoff
 
-Build an orchestrator that routes requests to specialist agents (code reviewer,
-security analyst, architecture advisor). The orchestrator uses a routing tool
-to decide which specialist handles each request.
+**Goal:** Build an orchestrator that routes requests to specialist agents using a tool call, demonstrating the sequential handoff pattern.
+
+**What to do:**
+1. Open `lab/src/foundry_agent.py`
+2. Look at `task_c()` (line ~312), the `SPECIALIST_AGENTS` dict (line ~268), and the `ROUTER_TOOLS` definition (line ~289) — the orchestrator uses a `route_to_specialist` tool with an enum of `code_review`, `security`, `architecture`
+3. Run: `uv run foundry --task C`
+
+**Expected result:**
+- Three requests route to different specialists:
+  ```
+  User: Review this Python function for bugs...
+    Routed to: code_review
+  ┌─ Specialist Response ─────────────────────────┐
+  │ The use of eval() on user input is dangerous...│
+  └────────────────────────────────────────────────┘
+
+  User: Is it safe to store API keys in environment variables...
+    Routed to: security
+
+  User: Should I use event sourcing or CRUD...
+    Routed to: architecture
+  ```
+- An agent topology tree prints at the end showing the orchestrator-to-specialist hierarchy
+
+**Why this matters:**
+Multi-agent handoff is how production systems scale beyond a single prompt. The orchestrator pattern decouples routing logic from domain expertise, so each specialist agent can be updated, tested, and versioned independently. AI Foundry supports this natively through sequential runs on shared threads.
 
 ---
 

@@ -224,23 +224,128 @@ cd lab && uv sync
 
 ### Task A: Retry with Backoff
 
-Implement the retry pattern with full jitter. Visualize the backoff schedule,
-then make a real API call through the retry wrapper.
+**Goal:** Implement exponential backoff with full jitter and observe how the delay schedule prevents thundering herd.
+
+**What to do:**
+1. Open `lab/src/reliability_patterns.py`
+2. Look at `retry_with_backoff()` (line ~64) — it handles 429, 500+, and network errors with jittered delays, and respects the `Retry-After` header when present
+3. Look at `task_a()` (line ~116) — it first prints a simulated backoff schedule table, then makes a real API call through the retry wrapper
+4. Run: `uv run reliability --task A`
+
+**Expected result:**
+- A backoff schedule table showing how max delay doubles per attempt:
+  ```
+  Backoff Schedule (base=1s, max=60s)
+  ┌──────────┬────────────┬───────────────┐
+  │ Attempt  │ Max Delay  │ Sample Jitter │
+  ├──────────┼────────────┼───────────────┤
+  │ 1        │ 1.0s       │ 0.73s         │
+  │ 2        │ 2.0s       │ 1.24s         │
+  │ 3        │ 4.0s       │ 2.87s         │
+  │ 4        │ 8.0s       │ 5.12s         │
+  │ 5        │ 16.0s      │ 9.45s         │
+  │ 6        │ 32.0s      │ 18.63s        │
+  └──────────┴────────────┴───────────────┘
+  ```
+- A successful API call response: `Response: Retry test passed`
+- If no errors occur, the retry wrapper returns on the first attempt with no delay
+
+**Why this matters:**
+Without jitter, all clients retry at the exact same intervals after a shared failure (e.g., Azure OpenAI regional outage recovery), causing a thundering herd that re-triggers the outage. Full jitter spreads retries across the delay window. The `Retry-After` header override is critical — it's the service telling you exactly when capacity returns.
 
 ### Task B: Circuit Breaker
 
-Build a circuit breaker with CLOSED/OPEN/HALF_OPEN states. Test it against
-a simulated flaky tool that fails every other call. Observe state transitions.
+**Goal:** Build a circuit breaker that transitions through CLOSED, OPEN, and HALF_OPEN states, preventing wasted calls to a known-failing dependency.
+
+**What to do:**
+1. Open `lab/src/reliability_patterns.py`
+2. Look at the `CircuitBreaker` class (line ~152) — it tracks `failure_count`, transitions to OPEN when failures hit the threshold, and transitions to HALF_OPEN after `recovery_timeout` elapses
+3. Look at `task_b()` (line ~215) — it runs 10 calls against a `flaky_tool` that fails every other call, with `failure_threshold=3` and `recovery_timeout=5.0`
+4. Run: `uv run reliability --task B`
+
+**Expected result:**
+- Calls alternate between success and failure until 3 failures trip the circuit:
+  ```
+  Call 1: state=closed, result={'result': 'Success for: query-0'}
+  Call 2: Failure recorded (1/3): Simulated failure on call 2
+  Call 2: state=closed, result=None
+  Call 3: state=closed, result={'result': 'Success for: query-2'}
+  Call 4: Failure recorded (2/3): Simulated failure on call 4
+  Call 5: state=closed, result={'result': 'Success for: query-4'}
+  Call 6: Failure recorded (3/3): Simulated failure on call 6
+         Circuit TRIPPED OPEN — will recover in 5.0s
+         Waiting for recovery timeout (5.0s)...
+  ```
+- After the recovery timeout, the circuit moves to HALF_OPEN and allows a probe call
+- A final stats table shows total calls, successes, failures, and final state
+
+**Why this matters:**
+When a downstream API is failing consistently, retrying every call wastes time and resources. A circuit breaker fails fast during outages, giving the dependency time to recover. In agent systems, this prevents cascading failures — if your RAG database is down, the agent should fall back immediately instead of timing out on every tool call.
 
 ### Task C: Fallback Chain
 
-Implement a three-tier fallback: primary model → constrained model → local
-cache. Each tier degrades gracefully when the previous tier fails.
+**Goal:** Implement a three-tier fallback that degrades gracefully from primary model to constrained model to local cache.
+
+**What to do:**
+1. Open `lab/src/reliability_patterns.py`
+2. Look at `task_c()` (line ~255) — it defines three tiers: `try_primary()` (full model call), `try_fallback()` (same model with simplified prompt and `max_tokens=100`), and `try_cache()` (local dict lookup)
+3. The cache is pre-populated with one entry: `"What is Azure OpenAI?"`. The other two prompts have no cache entry, so they rely on live model calls
+4. Run: `uv run reliability --task C`
+
+**Expected result:**
+- All three prompts succeed at Tier 1 (primary) under normal conditions:
+  ```
+  Query: What is Azure OpenAI?
+    Tier used: Primary
+  ┌────────────────────────────────────────────────────────────┐
+  │ Azure OpenAI Service provides REST API access to OpenAI's │
+  │ models including GPT-4o, GPT-4o-mini...                   │
+  └────────────────────────────────────────────────────────────┘
+
+  Query: Explain the circuit breaker pattern in 2 sentences.
+    Tier used: Primary
+  ...
+  ```
+- To test fallback behavior, temporarily change `try_primary` to raise an exception — the chain should fall through to Fallback or Cache tiers
+
+**Why this matters:**
+A degraded response is almost always better than no response. In production, the primary model might be rate-limited or the deployment might be down. The fallback chain trades quality for reliability — a shorter answer from a constrained prompt beats a timeout. Pre-populating a cache with answers to your most common queries provides a safety net even when all live models are unavailable.
 
 ### Task D: Output Guardrails
 
-Validate LLM outputs against a JSON schema. When validation fails, retry
-with the error message appended. Observe how the model self-corrects.
+**Goal:** Validate LLM outputs against a JSON schema and observe how the model self-corrects when validation fails.
+
+**What to do:**
+1. Open `lab/src/reliability_patterns.py`
+2. Look at `EXPECTED_SCHEMA` (line ~333) — it requires `action` (enum: approve/reject/escalate), `confidence` (number 0-1), and `reasoning` (string)
+3. Look at `validate_output()` (line ~344) — it strips markdown fencing, parses JSON, checks required fields, types, enums, and numeric ranges
+4. Look at `task_d()` (line ~379) — it sends three code review scenarios and retries up to 3 times if validation fails
+5. Run: `uv run reliability --task D`
+
+**Expected result:**
+- Three code review prompts are evaluated. Most pass on the first attempt:
+  ```
+  Review request: A user submitted a code change that adds eval()...
+    Attempt 1: Valid
+  ┌───────────┬──────────────────────────────────────────────────┐
+  │ action    │ reject                                           │
+  │ confidence│ 0.95                                             │
+  │ reasoning │ Using eval() on user input is a code injection...│
+  └───────────┴──────────────────────────────────────────────────┘
+
+  Review request: A user wants to add a logging statement...
+    Attempt 1: Valid
+  ┌───────────┬──────────────────────────────────────────────────┐
+  │ action    │ approve                                          │
+  │ confidence│ 0.9                                              │
+  │ reasoning │ Adding latency logging is a standard practice... │
+  └───────────┴──────────────────────────────────────────────────┘
+  ```
+- If the model returns invalid JSON or a missing field, the output shows the validation error and retries
+- After 3 failed attempts, escalation to human review is triggered
+
+**Why this matters:**
+LLM outputs are untrusted input. Without schema validation, an agent acting on malformed JSON will crash or — worse — silently do the wrong thing. The retry-with-feedback pattern works because models correct schema violations ~95% of the time on the second attempt. The 3-attempt cap with human escalation ensures you never loop indefinitely on a genuinely broken prompt.
 
 ---
 

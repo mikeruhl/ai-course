@@ -245,69 +245,166 @@ uv run python src/sk_lab.py
 
 ### Task 1: Kernel and Plugin Setup
 
-Configure a Kernel with Azure OpenAI. Create a Plugin with three functions:
-- `search(query: str) -> str` — simulate a knowledge base search
-- `summarize(text: str, max_words: int) -> str` — call the model to summarize
-- `classify(text: str) -> str` — classify text into a category
+**Goal:** Build a configured Semantic Kernel with registered plugins and invoke plugin functions directly, demonstrating that SK plugins are callable by your code without requiring an LLM interaction.
 
-Register the plugin on the kernel. Invoke a function directly (not through the
-model) using `kernel.invoke()`. Observe how SK handles the invocation.
+**What to do:**
+1. Open `lab/src/sk_lab.py` and locate `build_kernel()` (line 40). Import `Kernel` from `semantic_kernel` and `AzureChatCompletion` from `semantic_kernel.connectors.ai.open_ai`, instantiate the kernel, and add the Azure OpenAI service using `ENDPOINT`, `API_KEY`, and `DEPLOYMENT` variables.
+2. In the `CoursePlugin` class (line 60), add `@kernel_function` decorators to the `search`, `summarize`, and `classify` methods. Each decorator needs a `name` and `description`. Implement each method as a stub returning a simple string that includes the input parameter so you can verify arguments are passed correctly.
+3. In `task1_kernel_and_plugin()` (line 116), register `CoursePlugin` on the kernel with `kernel.add_plugin(CoursePlugin(), plugin_name="CoursePlugin")`, then invoke the `search` function directly via `await kernel.invoke(plugin_name="CoursePlugin", function_name="search", query="Azure Container Apps")`. Print the result.
+4. List all registered functions on the kernel by iterating through `kernel.plugins`. Also invoke the `classify` function directly with sample text and print the result.
+5. Run the lab:
+   ```bash
+   uv run python src/sk_lab.py
+   ```
 
-Goal: understand that plugins are just registered callables, and the model is
-one consumer of them — not the only one.
+**Expected result:**
+```
+──────────── Task 1: Kernel and Plugin Setup ────────────
+Search result: Found 3 documents about 'Azure Container Apps': [doc1, doc2, doc3]
+Registered functions: CoursePlugin-search, CoursePlugin-summarize, CoursePlugin-classify
+Classify result: technology
+```
+You should see the direct invocation return the stub string without any LLM call. The `kernel.plugins` output lists all three functions with their auto-generated schemas derived from the decorator metadata.
+
+**Why this matters:**
+SK plugins decouple function registration from invocation. In production systems, the same plugin serves both programmatic callers (your orchestration code) and the model's tool-calling loop. This architectural separation lets you unit-test plugin functions in isolation without mocking the LLM, and it ensures your tools work correctly before exposing them to the model.
 
 ### Task 2: ChatCompletionAgent with a Plugin
 
-Create a `ChatCompletionAgent` backed by your plugin from Task 1. Run a
-multi-turn conversation where the agent uses the search and summarize functions
-to answer questions. Observe the tool call trace — compare it to the raw loop
-you built in Module 3.
+**Goal:** Build a multi-turn conversational agent using SK's ChatCompletionAgent that automatically calls plugin functions via the tool-calling loop you manually implemented in Module 3.
 
-Questions to answer after completing:
-- Where does SK inject the tool schemas into the prompt?
-- Can you find where SK appends tool results to the message history?
-- How does SK handle parallel tool calls?
+**What to do:**
+1. Open `lab/src/sk_lab.py` and locate `task2_chat_completion_agent()` (line 144).
+2. Register `CoursePlugin` on the kernel with `kernel.add_plugin(CoursePlugin(), plugin_name="CoursePlugin")`.
+3. Import `ChatCompletionAgent` from `semantic_kernel.agents` and create an agent with `kernel=kernel`, `name="ResearchAssistant"`, and `instructions` containing a system prompt telling it to use the search tool to find information before answering questions.
+4. Send the agent a first message: `"What do you know about Semantic Kernel's architecture?"` using the agent's chat invocation API. Print the response.
+5. Follow up with a second message in the same conversation: `"Summarize what you found in 50 words or less."` This should trigger the `summarize` function. Print the response.
+6. After the conversation completes, inspect and print the full message history. Look for `tool_calls` entries in the messages and observe the structure: AIMessage with tool_calls, followed by ToolMessage with results.
+7. Run:
+   ```bash
+   uv run python src/sk_lab.py
+   ```
+
+**Expected result:**
+```
+──────────── Task 2: ChatCompletionAgent ────────────
+[ResearchAssistant] Tool call: search(query="Semantic Kernel architecture")
+[ResearchAssistant] Found 3 documents about 'Semantic Kernel architecture': [doc1, doc2, doc3]
+[ResearchAssistant] Semantic Kernel is a framework that uses a Kernel as an IoC container...
+
+[ResearchAssistant] Tool call: summarize(text="...", max_words=50)
+[ResearchAssistant] Summary (50 words): SK centralizes AI services through a Kernel...
+```
+The message history will contain `tool_calls` entries in AIMessage objects followed by tool result messages, structurally identical to the raw loop from Module 3. SK automatically injected the tool schemas from the `@kernel_function` decorators—you wrote no JSON schemas manually.
+
+**Why this matters:**
+Compare the code you just wrote to the manual tool-calling loop in Module 3. SK eliminated JSON schema authoring, the tool dispatch switch statement, and explicit message history management. The tradeoff: debugging now requires understanding SK's internal message flow and plugin execution pipeline rather than your own explicit loop. This abstraction accelerates development but adds a layer of indirection when troubleshooting.
 
 ### Task 3: Handlebars Planner
 
-Give the Handlebars Planner a complex multi-step goal:
-"Find information about Azure Container Apps, summarize the key features,
-classify the technology category, then produce a briefing document."
+**Goal:** Use the Handlebars Planner to decompose a multi-step goal into an inspectable, serializable Handlebars template plan, then execute it and count the LLM calls.
 
-Inspect the generated plan before executing it. Answer:
-- Is the generated plan correct? Does it sequence the functions logically?
-- What happens if you give it a goal that requires a function the kernel does
-  not have? How does SK handle that?
-- How many total LLM calls does this workflow make?
+**What to do:**
+1. Open `lab/src/sk_lab.py` and locate `task3_handlebars_planner()` (line 177).
+2. Register `CoursePlugin` on the kernel with `kernel.add_plugin(CoursePlugin(), plugin_name="CoursePlugin")`.
+3. Import `HandlebarsPlanner` from `semantic_kernel.planners.handlebars_planner`, create an instance with `planner = HandlebarsPlanner(kernel)`, then call `await planner.create_plan(goal)` using the `goal` string already defined in the function (lines 188-191).
+4. Print the raw Handlebars template plan before executing it. Inspect the template to see the exact function sequence the planner generated: which functions did it select and in what order?
+5. Execute the plan with `await plan.invoke(kernel)` and print the final result.
+6. Count and document how many LLM calls were made: 1 for plan generation + 1 for plan execution = 2 total. Add a comment explaining this count.
+7. Run:
+   ```bash
+   uv run python src/sk_lab.py
+   ```
+
+**Expected result:**
+```
+──────────── Task 3: Handlebars Planner ────────────
+Generated Plan (Handlebars template):
+{{#with (CoursePlugin-search query="Azure Container Apps")}}
+  {{#with (CoursePlugin-summarize text=this max_words=100)}}
+    {{#with (CoursePlugin-classify text=this)}}
+      Briefing: Category={{this}}, Summary={{../this}}
+    {{/with}}
+  {{/with}}
+{{/with}}
+
+Executing plan...
+Result: Briefing: Category=technology, Summary=Azure Container Apps is a serverless...
+LLM calls: 2 (1 plan generation + 1 plan execution)
+```
+The plan template shows the exact function sequence: search → summarize → classify. The planner selected these three functions and chained them with nested `{{#with}}` blocks for data flow. Two LLM calls total.
+
+**Why this matters:**
+The Handlebars planner makes the execution plan inspectable and serializable before it runs. In a production system processing 10,000 requests/day, the Function Calling Planner (single LLM call, native tool use) is more cost-efficient—half the API cost per request. The Handlebars planner is valuable in regulated industries where you need to show a human "here is exactly what I will do" before execution—an audit trail requirement. The tradeoff: extra latency and cost for inspectability.
 
 ### Task 4: AgentGroupChat — Critic and Writer
 
-Build an AgentGroupChat with two agents:
+**Goal:** Build a multi-agent critique-and-revise loop using SK's AgentGroupChat with a custom termination strategy that stops when the critic approves the output.
 
-**WriterAgent** — instructions: "You write clear, concise technical summaries.
-When asked to write something, produce a polished draft. Respond with your draft."
+**What to do:**
+1. Open `lab/src/sk_lab.py` and locate `task4_agent_group_chat()` (line 210).
+2. Build a kernel with `build_kernel()`. You can use a shared kernel instance for both agents or create separate instances—start with a shared kernel (simpler).
+3. Create two `ChatCompletionAgent` instances:
+   - `WriterAgent` with `name="WriterAgent"` and `instructions`: "You write clear, concise technical summaries. When given a topic, produce a polished draft. Respond with only your draft text."
+   - `CriticAgent` with `name="CriticAgent"` and `instructions`: "You review technical writing. Evaluate the draft for clarity, accuracy, and completeness. If it is acceptable, respond with 'APPROVED'. If not, provide specific numbered feedback for improvement."
+4. Import `AgentGroupChat` from `semantic_kernel.agents` and create a group chat with `agents=[writer_agent, critic_agent]`. Configure a termination strategy that stops when the critic says `APPROVED` or after 6 turns maximum. Look at `KernelFunctionTerminationStrategy` or `DefaultTerminationStrategy` in SK docs/samples for implementation guidance.
+5. Add the task message (defined at line 238-241) as the initial user message and invoke the group chat. As responses come in, print each agent's output labeled with the agent's name.
+6. After the conversation ends, print how many turns it took and whether the critic approved the output.
+7. Run:
+   ```bash
+   uv run python src/sk_lab.py
+   ```
 
-**CriticAgent** — instructions: "You review technical writing for clarity,
-accuracy, and completeness. Review the writer's draft and either approve it by
-saying APPROVED or provide specific feedback for improvement."
+**Expected result:**
+```
+──────────── Task 4: AgentGroupChat — Critic + Writer ────────────
+[WriterAgent] Kubernetes scheduling is the process by which the kube-scheduler assigns pods...
+[CriticAgent] Feedback: 1. Add mention of taints/tolerations. 2. Clarify resource requests vs limits.
+[WriterAgent] (revised) The kube-scheduler evaluates nodes using predicates and priorities...
+[CriticAgent] APPROVED
+Total turns: 4
+Critic approved: True
+```
+The writer revises based on the critic's numbered feedback. The loop terminates when `APPROVED` appears in the critic's message, not at the 6-turn max limit. The final draft is measurably better than the first draft.
 
-Termination strategy: stop when the critic says APPROVED or after 6 turns.
-
-Task: give the group chat "Write a 3-paragraph explanation of how Kubernetes
-handles pod scheduling." Observe the critique-revise loop.
+**Why this matters:**
+Without a termination condition, multi-agent loops run until `max_round`—burning tokens and budget on diminishing returns. The two-agent critic/writer pattern is production-grade for improving output quality: one agent generates, one evaluates, iterate until acceptable. The key design decision is the termination strategy: too strict and the loop ends before the output is good; too loose and you waste LLM calls after the output has already converged. Monitor turn counts in production to tune this threshold.
 
 ### Task 5: RAG Agent with Azure AI Search
 
-Connect SK to Azure AI Search as the memory store. Index 5-10 documents (use
-course README files or any markdown content). Build an agent that:
-1. Receives a user question
-2. Uses `kernel.memory.search()` to retrieve relevant chunks
-3. Includes retrieved chunks in the prompt context
-4. Answers using only the retrieved content, citing sources
+**Goal:** Integrate SK with Azure AI Search as a memory store and build a retrieval-augmented generation (RAG) agent that cites sources, comparing SK's abstraction to the manual RAG pattern from Module 9.
 
-This is the same RAG pattern from Module 9, but now expressed in SK's
-abstraction layer. Compare the two implementations: what did SK add? What
-did it hide that you might need to see in production?
+**What to do:**
+1. Open `C:\Users\MiRuh\source\learn\ai-course\modules\module-17-semantic-kernel\lab\src\sk_lab.py` and locate `task5_rag_agent()` (line 255). Set `AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_KEY`, and `AZURE_SEARCH_INDEX` in your `.env` file. If these are not configured, the function will skip this task.
+2. Build a kernel configured for both Azure OpenAI and Azure AI Search. Import `AzureAISearchCollection` from `semantic_kernel.connectors.memory.azure_ai_search`. Define a data model using a dataclass with the `@vectorstoremodel` decorator, or use SK's built-in `TextMemoryPlugin`.
+3. Index sample documents: read 2-3 README.md files from this repo (e.g., module-17, module-03, module-09) and store them in the Azure AI Search index via SK's memory API. Each document needs an ID, text content, and an embedding vector. SK can generate embeddings automatically if you add an embedding service to the kernel.
+4. Build a RAG agent with the following logic:
+   - Receive a user question
+   - Call `kernel.memory.search(query, collection=search_index, limit=3)` to retrieve relevant chunks
+   - Format the retrieved chunks as context in the prompt
+   - Generate an answer using only the retrieved content
+   - Cite which source document each piece of information came from
+5. Test with three queries: `"What is Semantic Kernel?"`, `"How does the agent loop work?"`, `"What is Azure Container Apps?"`. For each query, print the retrieved chunks with relevance scores, then print the agent's answer with source citations.
+6. Run:
+   ```bash
+   uv run python src/sk_lab.py
+   ```
+
+**Expected result:**
+```
+──────────── Task 5: RAG Agent with Azure AI Search ────────────
+Query: "What is Semantic Kernel?"
+Retrieved 3 chunks from index 'sk-module-docs'
+  [1] module-17/README.md (relevance: 0.92)
+  [2] module-03/README.md (relevance: 0.71)
+  [3] module-09/README.md (relevance: 0.65)
+Answer: Semantic Kernel is Microsoft's open-source SDK for building AI-powered
+applications with a Kernel-based IoC container pattern... [Source: module-17/README.md]
+```
+Each answer cites which source document the information came from. Compare to Module 9: SK abstracts the embedding call, index query, and prompt injection into a single `memory.search()` call. The tradeoff is reduced visibility into retrieval scores and chunk boundaries.
+
+**Why this matters:**
+SK's memory abstraction reduces RAG boilerplate significantly—no manual embedding generation, no direct Azure SDK calls, no prompt template management. But it hides retrieval details that matter in production: chunk overlap strategy, relevance score thresholds, hybrid search configuration (keyword + vector), and re-ranking logic. If your retrieval quality drops in production, you must debug inside SK's memory connector code, not just your application layer. Evaluate whether the development time savings justify the reduced observability and debugging complexity.
 
 ---
 

@@ -257,80 +257,232 @@ uv sync
 
 ### Task 1: Instrument the Agent with OTel Spans
 
-Add OpenTelemetry instrumentation to a ReAct-style agent (similar to module-03).
-Every LLM call becomes a span with token usage attributes. Every tool call becomes
-a child span.
+**Goal:** Add OpenTelemetry tracing to a ReAct-style agent so every LLM call and tool call is captured as a span with structured attributes.
 
-Open `lab/src/task1_instrumented_agent.py`.
+**What to do:**
+1. Open `lab/src/task1_instrumented_agent.py` and examine the agent structure:
+   - Lines 58-87: `call_llm_with_span()` function makes Azure OpenAI calls via httpx
+   - Lines 90-105: `call_tool_with_span()` function executes tool calls
+   - Lines 156-209: `run_agent()` orchestrates the agent loop
+2. Complete the four TODO sections:
+   - **Line 36-44**: Create a `TracerProvider`, add a `BatchSpanProcessor(ConsoleSpanExporter())`, call `trace.set_tracer_provider()`, then get a tracer with `trace.get_tracer("module-21-agent")`
+   - **Line 58-87**: In `call_llm_with_span()`, wrap the httpx.post call in a span using `tracer.start_as_current_span("llm_call")`. After getting the response, set attributes: `gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reason`, `gen_ai.response.id`
+   - **Line 90-105**: In `call_tool_with_span()`, create a child span named `f"tool_{tool_name}"` using `trace.use_span(parent_span)` context. Set attributes: `tool.name`, `tool.call_id`, `tool.success` (True/False after execution)
+   - **Line 178**: In `run_agent()`, wrap the entire agent loop (lines 180-209) in a root span named `"agent_run"` with attributes `agent.run_id` and `agent.user_input`
+3. Run: `uv run python src/task1_instrumented_agent.py`
 
-Requirements:
-- Root span per agent run named `"agent_run"`, with `agent.run_id` attribute
-- Child span per LLM call named `"llm_call"`, with all GenAI semantic convention attributes
-- Child span per tool call named `"tool_{name}"`, with `tool.name`, `tool.call_id`, `tool.success`
-- Use context propagation so tool spans are children of the LLM span that requested them
+**Expected result:**
+- Three questions execute successfully:
+  - "What's the weather in Seattle and Tokyo? Which one is warmer?"
+  - "What is 2 to the power of 32?"
+  - "What is the weather in Paris? Convert the temperature to Fahrenheit."
+- Console output shows agent responses followed by JSON span data:
+  ```
+  Agent run a1b2c3d4
+  What's the weather in Seattle and Tokyo? Which one is warmer?
+    Tool: get_weather({'city': 'Seattle'})
+    Tool: get_weather({'city': 'Tokyo'})
+  Answer: Both cities are at 18°C...
 
-Verify locally with the console exporter before pointing at App Insights.
+  {"name": "tool_get_weather", "context": {"trace_id": "0x...", "span_id": "0x..."},
+   "parent_id": "0x...", "attributes": {"tool.name": "get_weather", "tool.call_id": "call_xyz",
+   "tool.success": true}}
+  {"name": "llm_call", "attributes": {"gen_ai.system": "azure_openai",
+   "gen_ai.usage.input_tokens": 185, "gen_ai.usage.output_tokens": 42, ...}}
+  {"name": "agent_run", "attributes": {"agent.run_id": "a1b2c3d4-...", ...}}
+  ```
+- Verify parent-child hierarchy: each `tool_*` span's `parent_id` matches the `span_id` of the corresponding `llm_call` span, which itself has the `agent_run` span as parent
+
+**Why this matters:**
+Without structured spans, debugging a failed agent run means reading logs line by line and reconstructing the execution flow manually. With OTel spans, you get a queryable trace tree where every LLM call is tagged with token counts, latency, and model parameters, and every tool call is tagged with success/failure status. This structured telemetry is the foundation for the cost analysis, latency dashboards, and error rate alerts you'll build in Tasks 2-5. In production, trace IDs let you reconstruct exactly what happened in any user session, even across distributed systems.
 
 ### Task 2: Export to Application Insights
 
-Configure the OTLP exporter to send traces to your App Insights resource.
+**Goal:** Replace the console exporter with the Azure Monitor exporter so traces flow into Application Insights for persistent storage, querying, and dashboarding.
 
-Open `lab/src/task2_appinsights_export.py`.
+**What to do:**
+1. Open `lab/src/task2_appinsights_export.py` and review the structure:
+   - Lines 54-65: `TEST_QUESTIONS` contains 10 test prompts for batch execution
+   - Lines 68-103: `run_batch_with_tracking()` orchestrates the batch run and collects timing data
+   - Lines 106-123: `print_results_table()` renders results in a Rich table
+2. Complete the three TODO sections:
+   - **Line 43**: Add the import and call to configure Azure Monitor:
+     ```python
+     from azure.monitor.opentelemetry import configure_azure_monitor
+     configure_azure_monitor(
+         connection_string=os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"]
+     )
+     ```
+   - **Line 51**: Uncomment the import: `from task1_instrumented_agent import run_agent`
+   - **Line 86**: Replace the placeholder string with an actual call: `answer = run_agent(question)`
+3. Ensure your `.env` file contains `APPLICATIONINSIGHTS_CONNECTION_STRING` (from Terraform output)
+4. Run: `uv run python src/task2_appinsights_export.py`
 
-Requirements:
-- Use `azure-monitor-opentelemetry` to configure the exporter with your connection string
-- Run 10 agent calls against a test question set
-- Verify traces appear in Azure Portal under Application Insights > Transaction Search
-- Check that span attributes (token counts, model name) are visible in the trace detail view
+**Expected result:**
+- Script executes all 10 test questions sequentially
+- Rich table displays results:
+  ```
+  Batch Run Results
+  ┌───┬──────────────────────────────┬──────────────────────────────┬──────────┬────┐
+  │ # │ Question                     │ Answer                       │ Duration │ OK │
+  ├───┼──────────────────────────────┼──────────────────────────────┼──────────┼────┤
+  │ 1 │ What's the weather in London?│ The weather in London is 18°C│   1842ms │ Y  │
+  │ 2 │ What is 42 * 17?             │ 42 * 17 = 714               │    923ms │ Y  │
+  │ 3 │ What's the weather in New...?│ The weather in New York is...│   1654ms │ Y  │
+  │...│ ...                          │ ...                          │      ... │ ...│
+  └───┴──────────────────────────────┴──────────────────────────────┴──────────┴────┘
+  Success rate: 10/10
+  Avg duration: 1450ms
+  ```
+- Script sleeps 5 seconds at the end to allow batch flush
+- After 2-3 minutes, navigate to Azure Portal > Application Insights > Transaction Search
+- Filter by "Operation Name" = `agent_run` to see all 10 traces
+- Click any trace to view the full span hierarchy with attributes
 
-Expected: within 2-3 minutes of running, you should see traces in the portal.
+**Why this matters:**
+Console output is ephemeral and useless in production — it disappears when the process restarts and cannot be queried retroactively. Exporting to Application Insights gives you persistent, indexed telemetry with built-in retention policies. The `configure_azure_monitor()` one-liner is the standard pattern for any Python workload on Azure — it automatically sets up the TracerProvider, MeterProvider, and LoggingHandler with proper batching and export intervals. This same configuration works for Azure Functions, App Service, Container Apps, and AKS.
 
 ### Task 3: Kusto Queries
 
-Write and test three KQL queries in App Insights > Logs.
+**Goal:** Write three KQL queries that turn raw OTel span data into operational dashboards for latency, token usage, and error rates.
 
-Open `lab/src/task3_kusto_queries.kql` (also documented in the starter file).
+**What to do:**
+1. Open `lab/src/task3_kusto_queries.kql` in your editor
+2. Review the query structure and comments:
+   - Lines 11-29: Query 1 skeleton for p95 latency analysis
+   - Lines 33-55: Query 2 skeleton for token usage over time
+   - Lines 59-80: Query 3 skeleton for tool error rate tracking
+   - Lines 84-105: Bonus query for cost attribution by feature (fully implemented as reference)
+3. Complete the three TODO sections:
+   - **Query 1 (lines 22-29)**: Add `summarize` clause to compute `p50 = percentile(duration, 50)`, `p95 = percentile(duration, 95)`, `calls = count()`, `avg_ms = avg(duration)` grouped by `name`. Add `order by p95 desc`
+   - **Query 2 (lines 46-55)**: Add `extend` to extract `input_tokens = toint(customDimensions["gen_ai.usage.input_tokens"])` and `output_tokens = toint(customDimensions["gen_ai.usage.output_tokens"])`. Add `summarize total_input = sum(input_tokens), total_output = sum(output_tokens)` by `bin(timestamp, 1d)`. Add `extend total_tokens = total_input + total_output`. Add `render columnchart`
+   - **Query 3 (lines 71-80)**: Add `extend` to extract `tool_name = tostring(customDimensions["tool.name"])` and `tool_success = tobool(customDimensions["tool.success"])`. Add `summarize total = count(), errors = countif(tool_success == false)` by `bin(timestamp, 5m), tool_name`. Add `extend error_rate = todouble(errors) / todouble(total)`. Add `render timechart`
+4. Navigate to Azure Portal > Application Insights > Logs
+5. Paste and run each completed query
 
-Queries to write:
-1. **p95 latency by operation**: group by span name, compute p95 duration over last 24h
-2. **Total tokens per day**: sum input and output tokens across all agent runs, grouped by day
-3. **Tool call error rate**: compute `errors / total` per tool name, per 5-minute window
+**Expected result:**
+- Query 1 returns a table sorted by p95 latency:
+  ```
+  name             | p50    | p95     | calls | avg_ms
+  ──────────────────────────────────────────────────────
+  agent_run        | 3200   | 5800    | 10    | 3450
+  llm_call         | 1100   | 2200    | 24    | 1280
+  tool_calculate   | 3      | 7       | 6     | 4
+  tool_get_weather | 2      | 5       | 18    | 3
+  ```
+  This shows agent runs averaging 3.4s with p95 at 5.8s, while tool calls complete in milliseconds
+- Query 2 renders a stacked column chart with two series (input tokens, output tokens) per day. For the 10-run batch, you'll see a single day's bar showing ~4,500 input tokens and ~1,200 output tokens
+- Query 3 renders a time chart with one line per tool. With no deliberate failures injected, error rates should be 0% across all 5-minute windows
 
-Hint: App Insights stores OTel spans in the `dependencies` table. Span attributes become
-`customDimensions` columns.
+**Why this matters:**
+KQL queries are how you detect production issues before users report them. A sudden spike in `gen_ai.usage.output_tokens` might indicate a prompt regression causing the model to generate verbose responses, doubling your costs overnight. A rising tool error rate signals an upstream dependency (database, external API) starting to degrade — you can page the on-call engineer before the circuit breaker trips. A p95 latency increase from 2s to 8s means users are waiting, even if p50 looks normal. These three queries form the foundation of your agent health dashboard; pin them to an Azure Dashboard for continuous monitoring.
 
 ### Task 4: Eval Pipeline
 
-Build an LLM-as-judge eval pipeline over 20 test cases.
+**Goal:** Build an LLM-as-judge evaluation pipeline that scores agent outputs against a golden dataset, producing a repeatable quality metric for detecting regressions.
 
-Open `lab/src/task4_eval_pipeline.py`.
+**What to do:**
+1. Create `lab/src/eval_dataset.json` with 20 test cases in this format:
+   ```json
+   [
+     {"question": "What is 2^32?", "expected": "4294967296"},
+     {"question": "What's the weather in Paris in Fahrenheit?", "expected": "64.4°F (partly cloudy)"},
+     ...
+   ]
+   ```
+2. Create `lab/src/task4_eval_pipeline.py` with the following components:
+   - Load test cases from `eval_dataset.json`
+   - For each case: call `run_agent(question)` to get the actual output
+   - Send (question, expected, actual) to a judge LLM with this prompt structure:
+     ```
+     You are evaluating an AI assistant's response.
+     Question: {question}
+     Expected: {expected}
+     Actual: {actual}
 
-The test dataset is in `lab/src/eval_dataset.json` — 20 question/expected-answer pairs
-covering general knowledge and reasoning.
+     Score on a 1-5 scale:
+     - accuracy: factual correctness
+     - helpfulness: directly answers the question
+     Respond with JSON: {"accuracy": N, "helpfulness": N, "reasoning": "..."}
+     ```
+   - Parse the judge's JSON response, handle validation errors
+   - Compute average scores across all cases
+   - Save detailed results to `eval_results.json` with timestamp
+3. Run: `uv run python src/task4_eval_pipeline.py`
 
-Requirements:
-- Run each question through the instrumented agent
-- For each response, call the judge LLM with a structured scoring prompt
-- Parse the JSON score response (accuracy 1-5, helpfulness 1-5)
-- Print a summary table: per-question scores + aggregate averages
-- Save results to `eval_results.json` for trend tracking
+**Expected result:**
+- Progress output showing each eval case:
+  ```
+  Evaluating 1/20: What is 2^32?
+    Actual: The result is 4294967296
+    Judge: accuracy=5, helpfulness=4
+  Evaluating 2/20: What's the weather in Paris in Fahrenheit?
+    Actual: The weather in Paris is 18°C, which is 64.4°F
+    Judge: accuracy=5, helpfulness=5
+  ...
+  ```
+- Final summary table:
+  ```
+  Eval Results (20 cases)
+  ┌────┬────────────────────────────────────┬──────────┬─────────────┐
+  │ #  │ Question                           │ Accuracy │ Helpfulness │
+  ├────┼────────────────────────────────────┼──────────┼─────────────┤
+  │ 1  │ What is 2^32?                      │ 5        │ 4           │
+  │ 2  │ Weather in Paris in Fahrenheit?    │ 5        │ 5           │
+  │ 3  │ What is 15% of 847?                │ 5        │ 5           │
+  │...│ ...                                 │ ...      │ ...         │
+  ├────┼────────────────────────────────────┼──────────┼─────────────┤
+  │    │ AVERAGE                            │ 4.6      │ 4.5         │
+  └────┴────────────────────────────────────┴──────────┴─────────────┘
+  ```
+- JSON file saved at `lab/src/eval_results.json` with full details for tracking trends over time
 
-The judge prompt and scoring rubric are in the starter file. Do not change the rubric
-between runs — consistency is what makes the trend meaningful.
+**Why this matters:**
+You cannot unit-test non-deterministic outputs with `assertEqual()`. An eval pipeline with a fixed rubric and golden dataset is the only way to detect quality regressions when you change system prompts, swap models (e.g., GPT-4o to GPT-4o-mini), or update tool implementations. The key discipline: never change the rubric or dataset between runs — consistency is what makes the trend meaningful. If average accuracy drops from 4.6 to 3.8 after a prompt change, you have evidence of a regression. Run this pipeline in CI/CD before deploying agent updates to production.
 
 ### Task 5: Alerting
 
-Set up an Application Insights alert that fires when tool call error rate exceeds 5%
-in a 5-minute window.
+**Goal:** Programmatically create an Application Insights alert rule that fires when tool call error rate exceeds 5% in a 5-minute window, enabling proactive incident response.
 
-Open `lab/src/task5_alert_setup.py` — this uses the Azure SDK to create the alert rule
-programmatically (so it's reproducible, not a portal click).
+**What to do:**
+1. Create `lab/src/task5_alert_setup.py` with these components:
+   - Import `azure-mgmt-monitor` SDK: `from azure.mgmt.monitor import MonitorManagementClient`
+   - Authenticate using `DefaultAzureCredential` (requires `az login`)
+   - Create a scheduled query alert rule targeting your App Insights resource
+   - Set the KQL condition based on Query 3 from Task 3:
+     ```kusto
+     dependencies
+     | where name startswith "tool_"
+     | extend tool_success = tobool(customDimensions["tool.success"])
+     | summarize error_rate = todouble(countif(tool_success == false)) / todouble(count())
+     | where error_rate > 0.05
+     ```
+   - Configure evaluation frequency: 5 minutes, window size: 5 minutes
+   - Set severity: 2 (Warning)
+   - For the lab, use a console log action (no email/webhook)
+2. Add a test mode that injects failures:
+   - Modify `task1_instrumented_agent.py` temporarily: in `_execute_tool()` at line 108, add `if random.random() < 0.15: raise ConnectionError("Simulated failure")` to cause ~15% failure rate
+   - Re-run Task 2 batch to generate failure traces
+3. Run: `uv run python src/task5_alert_setup.py`
 
-Requirements:
-- Create a metric alert on the App Insights resource
-- Query: tool call error rate > 0.05 in 5-minute evaluation window
-- Action: log the alert to stdout (no need for real email/webhook in lab)
-- Test by injecting deliberate tool failures and confirming the alert would trigger
+**Expected result:**
+- Script authenticates and creates the alert rule:
+  ```
+  Creating alert rule: tool-error-rate-alert
+  Target resource: /subscriptions/abc123.../providers/microsoft.insights/components/app-insights-module21
+  Condition: KQL query returns error_rate > 0.05
+  Evaluation: every 5 minutes, window 5 minutes
+  Severity: Warning (2)
+
+  Alert rule created successfully!
+  Resource ID: /subscriptions/.../microsoft.insights/scheduledQueryRules/tool-error-rate-alert
+  ```
+- After injecting failures and running Task 2 again, navigate to Azure Portal > Application Insights > Alerts
+- Within 5-10 minutes, the alert fires and appears in the Alerts list with state "Fired"
+- Click the alert to see the triggering KQL query result showing error_rate = 0.15 (15%)
+
+**Why this matters:**
+Dashboards require someone to actively monitor them — they are reactive tools. Alerts are proactive: they push problems to you the moment thresholds are breached. In production, an agent whose tools silently fail (e.g., database timeout, external API 500) will continue running and generating plausible-sounding but factually wrong answers. Users may not notice immediately, but your reputation degrades with every incorrect response. A 5% error rate threshold gives you a 5-10 minute warning before the problem becomes user-visible, allowing you to investigate, roll back, or fail over. Creating alerts as code (not via portal clicks) makes them reproducible, version-controlled, and deployable via CI/CD alongside your agent.
 
 ---
 

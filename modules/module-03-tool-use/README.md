@@ -222,56 +222,213 @@ uv sync
 
 ### Task 1: Implement the agent loop
 
-In `src/agent.py`, implement the `run_agent()` function.
-The skeleton is provided. You need to:
+**Goal:** Build the core tool-calling agent loop from scratch — no frameworks, just the raw API protocol.
 
-1. Loop until `finish_reason == "stop"` or max iterations
-2. On `tool_calls`: execute each tool, append results, continue
-3. On `stop`: return the final message content
-4. Handle errors from tool execution gracefully
+**What to do:**
+1. Open `lab/src/agent.py` and locate the `run_agent()` function starting at line 196
+2. Review the function skeleton — it has TODO comments at lines 218-242 for each implementation step
+3. Implement the loop logic:
+   - Line 218: Call `httpx.post(BASE_URL, headers=HEADERS, json=payload, timeout=30)` where `payload` contains `messages`, `model: MODEL`, `tools: TOOLS`, and `tool_choice: "auto"`
+   - Line 225: Extract `message` from `response.json()["choices"][0]["message"]` and `finish_reason` from `response.json()["choices"][0]["finish_reason"]`
+   - Line 229: Append the assistant message to `messages` with `messages.append(message)`
+   - Line 231: If `finish_reason == "stop"`, return `message["content"]`
+   - Line 233: If `finish_reason == "tool_calls"`, iterate over `message["tool_calls"]`, parse `call["function"]["arguments"]` with `json.loads()`, execute via `call_tool(name, args)`, and append each tool result as `{"role": "tool", "tool_call_id": call["id"], "content": result}`
+4. Do not modify the tool implementations at lines 131-177 (`tool_list_directory`, `tool_read_file`, `tool_search_files`) or the `call_tool()` dispatcher at line 180
+5. Run:
+   ```bash
+   cd modules/module-03-tool-use/lab
+   uv run python src/agent.py
+   ```
 
-Do not modify the tool implementations — focus on the loop logic.
+**Expected result:**
+```
+╭─ Query: What files are in the modules directory? ─╮
+╰────────────────────────────────────────────────────╯
+
+--- Iteration 1 ---
+Tool call: list_directory({"path": "modules"})
+Result: dir  module-01-llm-primitive
+        dir  module-02-prompt-engineering
+        dir  module-03-tool-use
+
+--- Iteration 2 ---
+Finish reason: stop
+
+╭─ Final Answer ─╮
+│ The modules directory contains three subdirectories:
+│ - module-01-llm-primitive
+│ - module-02-prompt-engineering
+│ - module-03-tool-use
+╰────────────────╯
+```
+- The loop should terminate when `finish_reason == "stop"`
+- Each iteration prints the tool call name, arguments, and result
+- The final answer incorporates information gathered from tool calls
+
+**Why this matters:**
+Every agent framework (LangChain, Semantic Kernel, AutoGen) wraps this exact loop. Building it raw ensures you understand the protocol — message ordering, `tool_call_id` matching, finish reason branching — so you can debug framework issues instead of being blocked by them.
 
 ### Task 2: Fix the tool schemas
 
-The starter file has intentionally weak tool descriptions.
-Run the agent on the provided test queries. Note where it makes
-wrong tool selection decisions or uses wrong arguments.
+**Goal:** Demonstrate that tool description quality directly controls the model's tool selection accuracy.
 
-Improve the descriptions and re-run. Measure whether decisions improve.
+**What to do:**
+1. Open `lab/src/agent.py` and locate the `TOOLS` list starting at line 56
+2. Review the three tool definitions (lines 56-112). Each has intentionally weak descriptions:
+   - `list_directory` at line 61: `"Lists files."` (weak)
+   - Parameter description at line 67: `"The path."` (weak)
+   - `read_file` at line 78: `"Reads a file."` (weak)
+   - Parameter description at line 84: `"Path to file."` (weak)
+   - `search_files` at line 95: `"Searches files."` (weak)
+   - Parameter descriptions at lines 101 and 105: `"Where to search."` and `"What to search for."` (weak)
+3. Run the agent with these weak descriptions on a few queries and observe incorrect tool selection:
+   ```bash
+   cd modules/module-03-tool-use/lab
+   uv run python src/agent.py
+   ```
+4. Improve the descriptions. Add: what the tool does, when to use it, when NOT to use it, and what the parameters mean. For example, `list_directory` should clarify it lists immediate children of a directory (not recursive), and `read_file` should note it returns file contents as text (not for listing directories). Include "Do NOT use this for X" clauses.
+5. Re-run the same queries and compare tool selection decisions.
+
+**Expected result:**
+```
+Before (weak descriptions):
+  Query: "Find all Python files in modules/"
+  Tool called: read_file({"path": "modules/"})     ← WRONG tool
+  Result: Error: path is a directory, not a file
+
+After (improved descriptions):
+  Query: "Find all Python files in modules/"
+  Tool called: search_files({"directory": "modules/", "pattern": "*.py"})  ← CORRECT
+  Result: modules/module-01-llm-primitive/lab/src/main.py
+          modules/module-02-prompt-engineering/lab/src/prompts.py
+          ...
+```
+- Wrong tool selections should decrease after improving descriptions
+- The "Do NOT use this for X" pattern in descriptions is particularly effective
+
+**Why this matters:**
+In production agentic systems, the model picks tools based on descriptions, not implementation. A vague description is like a poorly documented API — callers will misuse it. Writing precise tool descriptions is the tool-use equivalent of writing a good system prompt.
 
 ### Task 3: Handle parallel tool calls
 
-The starter loop handles one tool call at a time.
-Modify it to handle multiple simultaneous tool calls.
+**Goal:** Extend the agent loop to process multiple tool calls returned in a single model response.
 
-Verify it works by adding a `print` statement that shows how many
-tool calls were in each response. Some queries should trigger 2–3.
+**What to do:**
+1. Open `lab/src/agent.py` and locate the `run_agent()` function (line 196)
+2. In your tool-call handling section (around line 233), modify the code to iterate over all items in `message["tool_calls"]` — it's a list, not a single object, so use a `for` loop
+3. Add a print statement before the loop showing the count:
+   ```python
+   console.print(f"Tool calls in this response: {len(message['tool_calls'])}")
+   ```
+4. Execute all tool calls in the loop and append all results to `messages` before the next API call (before the loop continues back to line 215)
+5. Modify the test query at line 262 to trigger parallel calls, such as: *"Read the README files from both module-01 and module-02"*
+6. Run:
+   ```bash
+   cd modules/module-03-tool-use/lab
+   uv run python src/agent.py
+   ```
+
+**Expected result:**
+```
+--- Iteration 1 ---
+Tool calls in this response: 2
+Tool call: read_file({"path": "modules/module-01-llm-primitive/README.md"})
+Tool call: read_file({"path": "modules/module-02-prompt-engineering/README.md"})
+Result [call_abc]: # Module 1: The LLM as a Primitive...
+Result [call_def]: # Module 2: Prompt Engineering at Staff Level...
+
+--- Iteration 2 ---
+Finish reason: stop
+```
+- Multi-file queries should show `Tool calls in this response: 2` or `3`
+- All tool results must be appended with their matching `tool_call_id` before the next API call
+
+**Why this matters:**
+Parallel tool calls reduce round-trips to the model. A 3-file read that takes 3 iterations serially completes in 1 iteration with parallel calls. In production, this directly impacts agent latency — and you can execute the tool calls concurrently with `asyncio.gather` for even more speedup.
 
 ### Task 4: Add error resilience
 
-Modify `call_tool()` to:
-1. Catch all exceptions and return them as error strings
-2. Validate arguments before executing (e.g., path traversal check)
-3. Add a per-tool timeout
+**Goal:** Make the agent robust to tool failures so errors become information, not crashes.
 
-Test with edge cases:
-- A path that doesn't exist
-- A binary file (read_file should handle gracefully)
-- A very large file (implement a size cap)
+**What to do:**
+1. Open `lab/src/agent.py` and locate the `call_tool()` function at line 180
+2. Wrap the tool dispatch logic (lines 182-189) in a `try/except` block that catches all exceptions and returns the error as a formatted string (e.g., `f"Error: {e}"`)
+3. Note that argument validation already exists:
+   - `_safe_path()` at line 123 checks for path traversal and raises `ValueError` if the path is outside `SAFE_ROOT`
+   - `tool_read_file()` at line 146 checks file size against `MAX_FILE_SIZE_BYTES` (defined at line 119)
+   - Tool implementations at lines 131-177 already return error strings for common failures
+4. Ensure your try/except in `call_tool()` catches exceptions from `_safe_path()` and the tool implementations
+5. Test with edge cases by modifying the query at line 262:
+   ```bash
+   cd modules/module-03-tool-use/lab
+   uv run python src/agent.py
+   ```
+   Use queries like: *"Read the file /etc/passwd"*, *"Read the file nonexistent.txt"*, *"Read a .pyc file"*
+
+**Expected result:**
+```
+--- Iteration 1 ---
+Tool call: read_file({"path": "/etc/passwd"})
+Result: Error: Path '/etc/passwd' is outside the allowed directory
+
+--- Iteration 2 ---
+Tool call: read_file({"path": "nonexistent.txt"})
+Result: Error: file does not exist: nonexistent.txt
+
+--- Iteration 3 ---
+Finish reason: stop
+Final Answer: I was unable to read those files. /etc/passwd is outside the
+allowed directory, and nonexistent.txt does not exist.
+```
+- Tool errors return as strings, never raise exceptions that crash the loop
+- The model receives the error message and adapts — it may retry, try a different tool, or explain the failure to the user
+- Path traversal attempts are blocked by `_safe_path()`
+
+**Why this matters:**
+Agents in production encounter file-not-found, permission denied, timeouts, and malformed arguments constantly. If a tool exception kills the loop, the user gets nothing. Returning errors as tool results lets the model reason about failures and give useful responses — the same pattern used by Claude Code, Copilot, and every production agent.
 
 ### Task 5: The main challenge — codebase Q&A
 
-Using your completed agent, answer these questions about the course
-repository itself:
+**Goal:** Use your completed agent to answer multi-step questions about a real codebase, observing how the model chains tool calls.
 
-1. *"How many Python files are in the modules directory?"*
-2. *"What dependencies does module-02 use?"*
-3. *"Find all files that contain the word 'terraform' and list their paths."*
-4. *"What is the learning objective of module-01?"*
+**What to do:**
+1. Open `lab/src/agent.py` and locate the `QUERIES` list at line 251 and the commented-out loop at line 267
+2. Review the four queries already defined in the `QUERIES` list (lines 251-256):
+   - *"How many Python files are in the modules directory? List their paths."*
+   - *"What Python dependencies does module-02 use? Check its pyproject.toml."*
+   - *"Find all files that contain the word 'terraform' in their name."*
+   - *"What are the learning objectives of module-01? Check its README."*
+3. Uncomment lines 267-270 (the `for query in QUERIES:` loop) and comment out the single test query at lines 262-264
+4. Optionally, add message logging to observe the full conversation history — insert `console.print(json.dumps(messages, indent=2))` at line 244 (just before the `return` statement) to dump the message array
+5. Run all queries:
+   ```bash
+   cd modules/module-03-tool-use/lab
+   uv run python src/agent.py
+   ```
 
-Log the full message history for each. Study how the model reasons
-through multi-step problems.
+**Expected result:**
+```
+Query: "How many Python files are in the modules directory?"
+  Iteration 1: search_files({"directory": "modules", "pattern": "*.py"})
+  Iteration 2: stop
+  Answer: There are 5 Python files in the modules directory:
+    - modules/module-01-llm-primitive/lab/src/main.py
+    - modules/module-02-prompt-engineering/lab/src/prompts.py
+    - modules/module-02-prompt-engineering/lab/src/harness.py
+    - modules/module-02-prompt-engineering/lab/src/injection_demo.py
+    - modules/module-03-tool-use/lab/src/agent.py
+
+Query: "What Python dependencies does module-02 use?"
+  Iteration 1: read_file({"path": "modules/module-02-prompt-engineering/lab/pyproject.toml"})
+  Iteration 2: stop
+  Answer: module-02 depends on httpx, python-dotenv, and rich.
+```
+- Study how the model picks tools: does it search first or list directories first?
+- Note multi-step reasoning: for "learning objectives," it must list the directory, find the README, then read it
+- Compare the message array length across queries — more steps means more messages
+
+**Why this matters:**
+This is the core pattern behind code assistants, internal knowledge bots, and autonomous debugging agents. The model decomposes a question into tool calls, gathers evidence, and synthesizes an answer. Understanding this message flow — and its failure modes — is the foundation for every agentic system you will build.
 
 ---
 
