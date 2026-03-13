@@ -1,6 +1,6 @@
 # Module 5: Structured Outputs at Depth
 
-**Week 2 · Phase 1 — Foundations**
+**Chapter 1 — Foundations**
 
 ---
 
@@ -529,4 +529,4 @@ The ~15% latency overhead of strict mode is the cost of constrained decoding. In
 
 ---
 
-**Next:** [Week 3 — Agentic Patterns: ReAct and Memory](../../weeks/week-03.md)
+**Next:** [Module 06 — ReAct Agent](../module-06-react-agent/README.md)

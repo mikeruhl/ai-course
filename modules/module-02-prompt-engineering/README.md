@@ -1,6 +1,6 @@
 # Module 2: Prompt Engineering at Staff Level
 
-**Week 1 · Phase 1 — Foundations**
+**Chapter 1 — Foundations**
 
 ---
 

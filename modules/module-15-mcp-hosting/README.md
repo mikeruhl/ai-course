@@ -1,6 +1,6 @@
 # Module 15: MCP Hosting on Azure Container Apps
 
-**Week 9-10 · Phase 4 — MCP Deep Dive**
+**Chapter 4 — MCP Deep Dive**
 
 ---
 

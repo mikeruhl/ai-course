@@ -1,6 +1,6 @@
 # Module 14: Building MCP Servers
 
-**Week 9 · Phase 4 — MCP Deep Dive**
+**Chapter 4 — MCP Deep Dive**
 
 ---
 

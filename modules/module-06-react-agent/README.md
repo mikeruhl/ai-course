@@ -1,6 +1,6 @@
 # Module 06: ReAct Agent (from Scratch)
 
-**Phase 2 — Agentic Patterns | Week 3**
+**Chapter 2 — Agentic Patterns**
 
 ## Prerequisites
 
