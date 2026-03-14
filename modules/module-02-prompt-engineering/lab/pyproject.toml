@@ -8,6 +8,7 @@ dependencies = [
     "tiktoken>=0.7",
     "python-dotenv>=1.0",
     "rich>=13.0",
+    "google-auth>=2.0",
 ]
 
 [tool.uv]

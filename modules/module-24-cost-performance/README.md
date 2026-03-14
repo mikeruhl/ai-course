@@ -197,6 +197,23 @@ cp lab/.env.example lab/.env
 cd lab && uv sync
 ```
 
+### Option B: Google Vertex AI
+
+Use Vertex AI's OpenAI-compatible endpoint instead of Azure OpenAI for the
+LLM calls. Azure-specific services still require Azure.
+
+1. Install the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install)
+2. Authenticate:
+   ```bash
+   gcloud auth login
+   gcloud auth application-default login
+   ```
+3. Enable the Vertex AI API:
+   ```bash
+   gcloud services enable aiplatform.googleapis.com --project=YOUR_PROJECT_ID
+   ```
+4. Set `LLM_PROVIDER=vertex` in your `.env` file and fill in `GCP_PROJECT_ID`.
+
 ### Tasks
 
 | Task | Command | What you'll build |

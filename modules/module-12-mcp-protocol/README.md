@@ -296,6 +296,23 @@ cp .env.example .env
 uv sync
 ```
 
+### Option B: Google Vertex AI
+
+Use Vertex AI's OpenAI-compatible endpoint instead of Azure OpenAI for the
+LLM calls. Azure-specific services (AI Search, embeddings) still require Azure.
+
+1. Install the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install)
+2. Authenticate:
+   ```bash
+   gcloud auth login
+   gcloud auth application-default login
+   ```
+3. Enable the Vertex AI API:
+   ```bash
+   gcloud services enable aiplatform.googleapis.com --project=YOUR_PROJECT_ID
+   ```
+4. Set `LLM_PROVIDER=vertex` in your `.env` file and fill in `GCP_PROJECT_ID`.
+
 No Azure OpenAI calls in this module — the MCP server itself doesn't call LLMs.
 The LLM (Claude Desktop or your own app) connects to your MCP server and calls
 the tools. The `.env` is included for consistency but not required for Labs A-D.

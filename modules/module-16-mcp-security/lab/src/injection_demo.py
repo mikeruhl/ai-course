@@ -34,13 +34,30 @@ load_dotenv()
 console = Console()
 
 # ---------------------------------------------------------------------------
-# Azure OpenAI configuration
+# LLM provider configuration
 # ---------------------------------------------------------------------------
+PROVIDER = os.getenv("LLM_PROVIDER", "azure")
 
-ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
-API_KEY = os.getenv("AZURE_OPENAI_KEY", "")
-DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
-API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
+if PROVIDER == "vertex":
+    import google.auth
+    import google.auth.transport.requests
+    GCP_PROJECT = os.environ["GCP_PROJECT_ID"]
+    GCP_REGION = os.getenv("GCP_REGION", "us-central1")
+    _credentials, _ = google.auth.default()
+    _credentials.refresh(google.auth.transport.requests.Request())
+    CHAT_URL = f"https://{GCP_REGION}-aiplatform.googleapis.com/v1/projects/{GCP_PROJECT}/locations/{GCP_REGION}/endpoints/openapi/chat/completions"
+    LLM_HEADERS = {"Authorization": f"Bearer {_credentials.token}", "Content-Type": "application/json"}
+    MODEL = os.getenv("VERTEX_MODEL", "google/gemini-2.0-flash")
+    ENDPOINT = ""
+    API_KEY = ""
+else:  # azure (default)
+    ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
+    API_KEY = os.getenv("AZURE_OPENAI_KEY", "")
+    DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+    API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
+    CHAT_URL = f"{ENDPOINT}/openai/deployments/{DEPLOYMENT}/chat/completions?api-version={API_VERSION}" if ENDPOINT else ""
+    LLM_HEADERS = {"api-key": API_KEY, "Content-Type": "application/json"}
+    MODEL = DEPLOYMENT
 
 # ---------------------------------------------------------------------------
 # Fake "filesystem" — a dict of filename -> content
@@ -159,22 +176,23 @@ def sanitize_tool_output(tool_result: str, max_length: int = 10000) -> str:
 
 
 def chat_completion(messages: list[dict], label: str = "") -> str:
-    """Call Azure OpenAI chat completion. Returns assistant content."""
-    if not ENDPOINT or not API_KEY:
+    """Call LLM chat completion. Returns assistant content."""
+    if not CHAT_URL:
         return (
-            "[No Azure OpenAI credentials configured — set AZURE_OPENAI_ENDPOINT "
-            "and AZURE_OPENAI_KEY in .env to run live calls.]"
+            "[No LLM credentials configured — set AZURE_OPENAI_ENDPOINT "
+            "and AZURE_OPENAI_KEY (or LLM_PROVIDER=vertex) in .env to run live calls.]"
         )
 
-    url = f"{ENDPOINT}/openai/deployments/{DEPLOYMENT}/chat/completions?api-version={API_VERSION}"
     payload = {
         "messages": messages,
         "temperature": 0.0,
         "max_tokens": 512,
     }
+    if PROVIDER == "vertex":
+        payload["model"] = MODEL
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.post(url, json=payload, headers={"api-key": API_KEY})
+            resp = client.post(CHAT_URL, json=payload, headers=LLM_HEADERS)
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"]
     except httpx.HTTPStatusError as e:
@@ -282,12 +300,13 @@ def main() -> None:
     display_injection_analysis()
     console.print()
 
-    # Step 3: Run both agents (requires Azure OpenAI credentials)
-    if not ENDPOINT or not API_KEY:
+    # Step 3: Run both agents (requires LLM credentials)
+    if not CHAT_URL:
         console.print(Panel(
-            "[yellow]Azure OpenAI credentials not configured.[/yellow]\n\n"
-            "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_KEY in lab/.env to\n"
-            "run the live agent comparison.\n\n"
+            "[yellow]LLM credentials not configured.[/yellow]\n\n"
+            "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_KEY in lab/.env\n"
+            "(or set LLM_PROVIDER=vertex with GCP_PROJECT_ID) to run the\n"
+            "live agent comparison.\n\n"
             "The injection analysis above (Step 2) runs without credentials\n"
             "and demonstrates the detection/sanitization logic.",
             title="Live Agent Demo (skipped)",

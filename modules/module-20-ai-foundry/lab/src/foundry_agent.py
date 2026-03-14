@@ -31,13 +31,26 @@ from rich.tree import Tree
 
 load_dotenv()
 
-ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
-API_KEY = os.environ["AZURE_OPENAI_KEY"]
-DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
-API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+PROVIDER = os.environ.get("LLM_PROVIDER", "azure")
 
-CHAT_URL = f"{ENDPOINT}/openai/deployments/{DEPLOYMENT}/chat/completions?api-version={API_VERSION}"
-HEADERS = {"Content-Type": "application/json", "api-key": API_KEY}
+if PROVIDER == "vertex":
+    import google.auth
+    import google.auth.transport.requests
+    GCP_PROJECT = os.environ["GCP_PROJECT_ID"]
+    GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
+    _credentials, _ = google.auth.default()
+    _credentials.refresh(google.auth.transport.requests.Request())
+    CHAT_URL = f"https://{GCP_REGION}-aiplatform.googleapis.com/v1/projects/{GCP_PROJECT}/locations/{GCP_REGION}/endpoints/openapi/chat/completions"
+    HEADERS = {"Authorization": f"Bearer {_credentials.token}", "Content-Type": "application/json"}
+    MODEL = os.environ.get("VERTEX_MODEL", "google/gemini-2.0-flash")
+else:  # azure (default)
+    ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
+    API_KEY = os.environ["AZURE_OPENAI_KEY"]
+    DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+    API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+    CHAT_URL = f"{ENDPOINT}/openai/deployments/{DEPLOYMENT}/chat/completions?api-version={API_VERSION}"
+    HEADERS = {"Content-Type": "application/json", "api-key": API_KEY}
+    MODEL = DEPLOYMENT
 
 console = Console()
 
@@ -195,7 +208,7 @@ async def task_a():
             "You are a research assistant with access to a calculator, document search, "
             "and date lookup. Use tools when needed to answer questions accurately."
         ),
-        model=DEPLOYMENT,
+        model=MODEL,
         tools=TOOLS,
     )
 
@@ -230,7 +243,7 @@ async def task_b():
         id="agent-002",
         name="Conversational Agent",
         instructions="You are a helpful assistant. Remember context from earlier in the conversation.",
-        model=DEPLOYMENT,
+        model=MODEL,
         tools=[],
     )
 
@@ -270,19 +283,19 @@ SPECIALIST_AGENTS = {
         id="specialist-code",
         name="Code Reviewer",
         instructions="You are an expert code reviewer. Analyze code for bugs, style, and performance. Be specific and actionable.",
-        model=DEPLOYMENT,
+        model=MODEL,
     ),
     "security": AgentDefinition(
         id="specialist-security",
         name="Security Analyst",
         instructions="You are a security analyst. Identify vulnerabilities, injection risks, and suggest mitigations. Reference OWASP when applicable.",
-        model=DEPLOYMENT,
+        model=MODEL,
     ),
     "architecture": AgentDefinition(
         id="specialist-arch",
         name="Architecture Advisor",
         instructions="You are a software architect. Evaluate design decisions, suggest patterns, and identify scalability concerns.",
-        model=DEPLOYMENT,
+        model=MODEL,
     ),
 }
 
@@ -321,7 +334,7 @@ async def task_c():
             "Analyze the user's request and call route_to_specialist with the appropriate specialist. "
             "Available specialists: code_review, security, architecture."
         ),
-        model=DEPLOYMENT,
+        model=MODEL,
         tools=ROUTER_TOOLS,
     )
 

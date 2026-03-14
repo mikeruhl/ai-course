@@ -21,6 +21,7 @@ By the end of this module you will:
 - [Course setup](../../setup/README.md) complete (uv installed)
 - **Ollama** installed locally (`ollama pull llama3.1`) — free, no account needed
 - *Optional*: Azure subscription (for comparing with Azure OpenAI later)
+- *Optional*: Google Cloud project with Vertex AI API enabled
 
 No prior ML knowledge needed. Strong REST API familiarity assumed.
 
@@ -176,6 +177,21 @@ If you want to use Azure OpenAI for this module, provision resources with
 terraform (see `terraform/` directory), then set `LLM_PROVIDER=azure` in
 your `.env` file.
 
+### Option C: Google Vertex AI
+
+1. Install the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install)
+2. Authenticate:
+   ```bash
+   gcloud auth login
+   gcloud auth application-default login
+   ```
+3. Enable the Vertex AI API:
+   ```bash
+   gcloud services enable aiplatform.googleapis.com --project=YOUR_PROJECT_ID
+   ```
+4. Set `LLM_PROVIDER=vertex` in your `.env` file and fill in `GCP_PROJECT_ID`
+   and (optionally) `GCP_REGION` and `VERTEX_MODEL`.
+
 ---
 
 ## Lab Setup
@@ -187,9 +203,9 @@ uv sync                 # installs dependencies
 ```
 
 > **Note**: Module 01 uses `tiktoken` for token counting. Tiktoken is the
-> tokenizer for GPT-4o/GPT-4o-mini. Ollama models use different tokenizers,
-> so exact token counts may differ from API-reported usage. The concepts
-> (tokens, cost, context windows) still apply.
+> tokenizer for GPT-4o/GPT-4o-mini. Ollama models and Gemini models use
+> different tokenizers, so exact token counts may differ from API-reported
+> usage. The concepts (tokens, cost, context windows) still apply.
 
 ---
 

@@ -30,22 +30,37 @@ load_dotenv()
 console = Console()
 
 # ---------------------------------------------------------------------------
-# Azure OpenAI configuration
+# LLM connection — defaults to Azure OpenAI. Set LLM_PROVIDER=vertex for Vertex AI.
 # ---------------------------------------------------------------------------
-ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
-API_KEY = os.environ.get("AZURE_OPENAI_KEY", "")
-DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
-API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+PROVIDER = os.environ.get("LLM_PROVIDER", "azure")
 
-BASE_URL = (
-    f"{ENDPOINT}/openai/deployments/{DEPLOYMENT}/chat/completions"
-    f"?api-version={API_VERSION}"
-)
-
-HEADERS = {
-    "Content-Type": "application/json",
-    "api-key": API_KEY,
-}
+if PROVIDER == "vertex":
+    import google.auth
+    import google.auth.transport.requests
+    GCP_PROJECT = os.environ["GCP_PROJECT_ID"]
+    GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
+    _credentials, _ = google.auth.default()
+    _credentials.refresh(google.auth.transport.requests.Request())
+    BASE_URL = (
+        f"https://{GCP_REGION}-aiplatform.googleapis.com/v1/projects/{GCP_PROJECT}"
+        f"/locations/{GCP_REGION}/endpoints/openapi/chat/completions"
+    )
+    HEADERS = {"Authorization": f"Bearer {_credentials.token}", "Content-Type": "application/json"}
+    MODEL = os.environ.get("VERTEX_MODEL", "google/gemini-2.0-flash")
+else:  # azure (default)
+    ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
+    API_KEY = os.environ.get("AZURE_OPENAI_KEY", "")
+    DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
+    API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+    BASE_URL = (
+        f"{ENDPOINT}/openai/deployments/{DEPLOYMENT}/chat/completions"
+        f"?api-version={API_VERSION}"
+    )
+    HEADERS = {
+        "Content-Type": "application/json",
+        "api-key": API_KEY,
+    }
+    MODEL = DEPLOYMENT
 
 # Resolve the cards directory relative to this file so the script works
 # from any working directory.
@@ -70,7 +85,7 @@ def call_llm(messages: list[dict], response_format: dict | None = None) -> str:
     Raises:
         RuntimeError: If the API returns a non-2xx status.
     """
-    if not ENDPOINT or not API_KEY:
+    if PROVIDER == "azure" and (not ENDPOINT or not API_KEY):
         raise RuntimeError(
             "AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_KEY must be set in your .env file."
         )

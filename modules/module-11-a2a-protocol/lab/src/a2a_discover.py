@@ -27,6 +27,36 @@ load_dotenv()
 console = Console()
 
 # ---------------------------------------------------------------------------
+# LLM connection — defaults to Azure OpenAI. Set LLM_PROVIDER=vertex for Vertex AI.
+# ---------------------------------------------------------------------------
+PROVIDER = os.environ.get("LLM_PROVIDER", "azure")
+
+if PROVIDER == "vertex":
+    import google.auth
+    import google.auth.transport.requests
+    GCP_PROJECT = os.environ["GCP_PROJECT_ID"]
+    GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
+    _credentials, _ = google.auth.default()
+    _credentials.refresh(google.auth.transport.requests.Request())
+    _CHAT_URL = (
+        f"https://{GCP_REGION}-aiplatform.googleapis.com/v1/projects/{GCP_PROJECT}"
+        f"/locations/{GCP_REGION}/endpoints/openapi/chat/completions"
+    )
+    _CHAT_HEADERS = {"Authorization": f"Bearer {_credentials.token}", "Content-Type": "application/json"}
+    _MODEL = os.environ.get("VERTEX_MODEL", "google/gemini-2.0-flash")
+else:  # azure (default)
+    _endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
+    _api_key = os.environ.get("AZURE_OPENAI_KEY", "")
+    _deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+    _api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+    _CHAT_URL = f"{_endpoint}/openai/deployments/{_deployment}/chat/completions?api-version={_api_version}"
+    _CHAT_HEADERS = {
+        "Content-Type": "application/json",
+        "api-key": _api_key,
+    }
+    _MODEL = _deployment
+
+# ---------------------------------------------------------------------------
 # Known agent URLs for demo (would come from a service registry in production)
 # ---------------------------------------------------------------------------
 KNOWN_AGENT_URLS = [
@@ -112,11 +142,9 @@ def select_agent_for_task(agents: list[dict], task_description: str) -> dict:
       - Match the response back to the agents list.
       - Fall back to agents[0] if parsing fails.
 
-    Hint — raw REST call to Azure OpenAI:
-      endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
-      deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
-      api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
-      url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
+    Hint — use the module-level LLM config:
+      url = _CHAT_URL
+      headers = _CHAT_HEADERS
     """
     raise NotImplementedError("Task 3: implement LLM-based agent selection")
 

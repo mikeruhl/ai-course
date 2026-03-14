@@ -36,22 +36,50 @@ from rich.table import Table
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# Azure OpenAI connection constants
+# LLM connection — defaults to Azure OpenAI. Set LLM_PROVIDER=vertex for Vertex AI.
 # ---------------------------------------------------------------------------
-ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
-API_KEY = os.environ["AZURE_OPENAI_KEY"]
-DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+PROVIDER = os.environ.get("LLM_PROVIDER", "azure")
+
+if PROVIDER == "vertex":
+    import google.auth
+    import google.auth.transport.requests
+    GCP_PROJECT = os.environ["GCP_PROJECT_ID"]
+    GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
+    _credentials, _ = google.auth.default()
+    _credentials.refresh(google.auth.transport.requests.Request())
+    CHAT_URL = (
+        f"https://{GCP_REGION}-aiplatform.googleapis.com/v1/projects/{GCP_PROJECT}"
+        f"/locations/{GCP_REGION}/endpoints/openapi/chat/completions"
+    )
+    CHAT_HEADERS = {"Authorization": f"Bearer {_credentials.token}", "Content-Type": "application/json"}
+    MODEL = os.environ.get("VERTEX_MODEL", "google/gemini-2.0-flash")
+else:  # azure (default)
+    ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
+    API_KEY = os.environ["AZURE_OPENAI_KEY"]
+    DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+    API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+    CHAT_URL = f"{ENDPOINT}/openai/deployments/{DEPLOYMENT}/chat/completions?api-version={API_VERSION}"
+    CHAT_HEADERS = {"Content-Type": "application/json", "api-key": API_KEY}
+    MODEL = DEPLOYMENT
+
+# ---------------------------------------------------------------------------
+# Azure OpenAI Embedding connection (always Azure — embeddings are not provider-switched)
+# ---------------------------------------------------------------------------
+_EMBED_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
+_EMBED_API_KEY = os.environ.get("AZURE_OPENAI_KEY", "")
 EMBEDDING_DEPLOYMENT = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small")
-API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+_EMBED_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+EMBED_URL = f"{_EMBED_ENDPOINT}/openai/deployments/{EMBEDDING_DEPLOYMENT}/embeddings?api-version={_EMBED_API_VERSION}"
+EMBED_HEADERS = {"Content-Type": "application/json", "api-key": _EMBED_API_KEY}
 
-CHAT_URL = f"{ENDPOINT}/openai/deployments/{DEPLOYMENT}/chat/completions?api-version={API_VERSION}"
-EMBED_URL = f"{ENDPOINT}/openai/deployments/{EMBEDDING_DEPLOYMENT}/embeddings?api-version={API_VERSION}"
-
+# ---------------------------------------------------------------------------
+# Azure AI Search connection (always Azure)
+# ---------------------------------------------------------------------------
 SEARCH_ENDPOINT = os.environ.get("AZURE_SEARCH_ENDPOINT", "")
 SEARCH_KEY = os.environ.get("AZURE_SEARCH_KEY", "")
 SEARCH_INDEX = os.environ.get("AZURE_SEARCH_INDEX", "rag-documents")
 
-HEADERS = {"Content-Type": "application/json", "api-key": API_KEY}
+HEADERS = CHAT_HEADERS
 
 console = Console()
 
@@ -183,7 +211,7 @@ async def chat(client: httpx.AsyncClient, messages: list[dict], temperature: flo
 async def embed(client: httpx.AsyncClient, texts: list[str]) -> list[list[float]]:
     resp = await client.post(
         EMBED_URL,
-        headers=HEADERS,
+        headers=EMBED_HEADERS,
         json={"input": texts},
         timeout=60,
     )

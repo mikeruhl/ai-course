@@ -29,15 +29,28 @@ from mcp.types import Message, TextContent
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# Azure OpenAI configuration
+# LLM provider configuration
 # ---------------------------------------------------------------------------
-ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
-API_KEY = os.environ["AZURE_OPENAI_KEY"]
-DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
-API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+PROVIDER = os.environ.get("LLM_PROVIDER", "azure")
 
-CHAT_URL = f"{ENDPOINT}/openai/deployments/{DEPLOYMENT}/chat/completions?api-version={API_VERSION}"
-HEADERS = {"api-key": API_KEY, "Content-Type": "application/json"}
+if PROVIDER == "vertex":
+    import google.auth
+    import google.auth.transport.requests
+    GCP_PROJECT = os.environ["GCP_PROJECT_ID"]
+    GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
+    _credentials, _ = google.auth.default()
+    _credentials.refresh(google.auth.transport.requests.Request())
+    CHAT_URL = f"https://{GCP_REGION}-aiplatform.googleapis.com/v1/projects/{GCP_PROJECT}/locations/{GCP_REGION}/endpoints/openapi/chat/completions"
+    HEADERS = {"Authorization": f"Bearer {_credentials.token}", "Content-Type": "application/json"}
+    MODEL = os.environ.get("VERTEX_MODEL", "google/gemini-2.0-flash")
+else:  # azure (default)
+    ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
+    API_KEY = os.environ["AZURE_OPENAI_KEY"]
+    DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+    API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+    CHAT_URL = f"{ENDPOINT}/openai/deployments/{DEPLOYMENT}/chat/completions?api-version={API_VERSION}"
+    HEADERS = {"api-key": API_KEY, "Content-Type": "application/json"}
+    MODEL = DEPLOYMENT
 
 KB_PATH = pathlib.Path(os.environ.get("KB_PATH", "./knowledge_base")).resolve()
 

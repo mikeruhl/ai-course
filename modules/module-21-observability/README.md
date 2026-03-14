@@ -255,6 +255,23 @@ cp .env.example .env
 uv sync
 ```
 
+### Option B: Google Vertex AI
+
+Use Vertex AI's OpenAI-compatible endpoint instead of Azure OpenAI for the
+LLM calls. Azure-specific services still require Azure.
+
+1. Install the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install)
+2. Authenticate:
+   ```bash
+   gcloud auth login
+   gcloud auth application-default login
+   ```
+3. Enable the Vertex AI API:
+   ```bash
+   gcloud services enable aiplatform.googleapis.com --project=YOUR_PROJECT_ID
+   ```
+4. Set `LLM_PROVIDER=vertex` in your `.env` file and fill in `GCP_PROJECT_ID`.
+
 ### Task 1: Instrument the Agent with OTel Spans
 
 **Goal:** Add OpenTelemetry tracing to a ReAct-style agent so every LLM call and tool call is captured as a span with structured attributes.

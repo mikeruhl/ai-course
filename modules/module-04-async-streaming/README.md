@@ -20,6 +20,7 @@ By the end of this module you will:
 
 - [Module 3](../module-03-tool-use/README.md) complete — you need the working agent loop
 - Azure OpenAI resources from Module 1 still running
+- Optional: Google Cloud project with Vertex AI API enabled
 
 ---
 
@@ -292,6 +293,21 @@ diminishing returns after ~10 (rate limits, connection pooling).
 ## Azure Setup
 
 No new Terraform needed. Uses the same Azure OpenAI resources from Module 1.
+
+### Option C: Google Vertex AI
+
+1. Install the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install)
+2. Authenticate:
+   ```bash
+   gcloud auth login
+   gcloud auth application-default login
+   ```
+3. Enable the Vertex AI API:
+   ```bash
+   gcloud services enable aiplatform.googleapis.com --project=YOUR_PROJECT_ID
+   ```
+4. Set `LLM_PROVIDER=vertex` in your `.env` file and fill in `GCP_PROJECT_ID`
+   and (optionally) `GCP_REGION` and `VERTEX_MODEL`.
 
 ---
 

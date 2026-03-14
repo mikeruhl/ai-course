@@ -10,6 +10,7 @@ dependencies = [
     "tiktoken>=0.7",
     "azure-search-documents>=11.4",
     "azure-identity>=1.15",
+    "google-auth>=2.0",
 ]
 
 [tool.uv]

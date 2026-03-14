@@ -79,21 +79,43 @@ class Task:
 TASKS: dict[str, Task] = {}
 
 # ---------------------------------------------------------------------------
-# Azure OpenAI helper
+# LLM connection — defaults to Azure OpenAI. Set LLM_PROVIDER=vertex for Vertex AI.
+# ---------------------------------------------------------------------------
+PROVIDER = os.environ.get("LLM_PROVIDER", "azure")
+
+if PROVIDER == "vertex":
+    import google.auth
+    import google.auth.transport.requests
+    GCP_PROJECT = os.environ["GCP_PROJECT_ID"]
+    GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
+    _credentials, _ = google.auth.default()
+    _credentials.refresh(google.auth.transport.requests.Request())
+    _CHAT_URL = (
+        f"https://{GCP_REGION}-aiplatform.googleapis.com/v1/projects/{GCP_PROJECT}"
+        f"/locations/{GCP_REGION}/endpoints/openapi/chat/completions"
+    )
+    _CHAT_HEADERS = {"Authorization": f"Bearer {_credentials.token}", "Content-Type": "application/json"}
+    _MODEL = os.environ.get("VERTEX_MODEL", "google/gemini-2.0-flash")
+else:  # azure (default)
+    _endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
+    _api_key = os.environ["AZURE_OPENAI_KEY"]
+    _deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+    _api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+    _CHAT_URL = f"{_endpoint}/openai/deployments/{_deployment}/chat/completions?api-version={_api_version}"
+    _CHAT_HEADERS = {
+        "Content-Type": "application/json",
+        "api-key": _api_key,
+    }
+    _MODEL = _deployment
+
+# ---------------------------------------------------------------------------
+# LLM helper
 # ---------------------------------------------------------------------------
 
 def run_research_agent(input_text: str) -> str:
-    """Call Azure OpenAI to answer a research question."""
-    endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
-    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
-    api_key = os.environ["AZURE_OPENAI_KEY"]
-
-    url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
-    headers = {
-        "Content-Type": "application/json",
-        "api-key": api_key,
-    }
+    """Call the configured LLM to answer a research question."""
+    url = _CHAT_URL
+    headers = _CHAT_HEADERS
     payload = {
         "messages": [
             {

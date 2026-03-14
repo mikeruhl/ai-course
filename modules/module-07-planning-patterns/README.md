@@ -6,6 +6,7 @@
 
 - Module 06 (ReAct Agent) complete
 - Azure OpenAI resource running (reuses module-01 infrastructure)
+- Optional: Google Cloud project with Vertex AI API enabled
 - Python 3.11+, `uv` installed
 
 ---
@@ -160,6 +161,21 @@ cp .env.example .env
 uv sync
 uv run python src/plan_execute.py
 ```
+
+### Option C: Google Vertex AI
+
+1. Install the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install)
+2. Authenticate:
+   ```bash
+   gcloud auth login
+   gcloud auth application-default login
+   ```
+3. Enable the Vertex AI API:
+   ```bash
+   gcloud services enable aiplatform.googleapis.com --project=YOUR_PROJECT_ID
+   ```
+4. Set `LLM_PROVIDER=vertex` in your `.env` file and fill in `GCP_PROJECT_ID`
+   and (optionally) `GCP_REGION` and `VERTEX_MODEL`.
 
 ---
 
